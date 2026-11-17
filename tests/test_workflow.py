@@ -262,6 +262,8 @@ async def test_live_plan_closes_with_template_summary_and_replays(environment, s
     assert result.progress_message.startswith("Your trip is ready.")
     count = len(searches)
     assert count == 4  # Two waves give one verified option and one comparison.
+    # Both waves run together, so compare searches without relying on start order.
+    assert sorted(searches) == ["flight", "flight", "stay", "stay"]
     await replay(handle)
     assert len(searches) == count  # Replay uses the completed search Activity results.
 
@@ -290,7 +292,8 @@ async def test_live_search_retries_once_after_lost_attempt(environment, session_
         )
     assert result.phase == "closed"
     assert result.itinerary is not None
-    assert attempts[:2] == [1, 2]
+    # The lost first attempt is retried once; the comparison wave may start in between.
+    assert attempts[0] == 1 and attempts.count(2) == 1
 
 
 async def test_second_worker_recovers_a_search_when_first_worker_stops(environment, session_input):
@@ -333,7 +336,9 @@ async def test_second_worker_recovers_a_search_when_first_worker_stops(environme
             activities=[recovered_flight, sample_stays],
         ):
             await asyncio.wait_for(recovered.wait(), timeout=25)
-            result = await asyncio.wait_for(handle.result(), timeout=60)
+            # Comparison searches start with the first wave, so the stopped worker can also
+            # lose one that only retries after the 15-second heartbeat timeout.
+            result = await asyncio.wait_for(handle.result(), timeout=90)
     assert result.phase == "closed"
     assert result.itinerary and result.itinerary.trips[0].journey
 
@@ -371,6 +376,44 @@ async def test_slow_comparison_keeps_first_complete_wave(environment, session_in
     assert result.itinerary and result.itinerary.trips[0].journey
     assert result.itinerary.trips[0].stay
     assert result.itinerary.trips[0].stay.check_in == first_dates[0]
+
+
+async def test_comparison_wave_starts_before_first_wave_finishes(environment, session_input):
+    from cpfc_trip.planner.planning import enumerate_specs
+
+    first_spec = enumerate_specs(session_input.brief, session_input.fixtures, session_input.routes)[
+        0
+    ]
+    first_dates = (first_spec.outbound_date, first_spec.return_date)
+    comparison_started = asyncio.Event()
+    searched_dates = set()
+
+    @activity.defn(name="search_flights")
+    async def flights(spec: SearchSpec) -> SearchBatch:
+        dates = (spec.outbound_date, spec.return_date)
+        searched_dates.add(dates)
+        if dates == first_dates:
+            # Sequential waves would never start the comparison while this search waits.
+            await asyncio.wait_for(comparison_started.wait(), timeout=5)
+        else:
+            comparison_started.set()
+        return sample(spec, "flight")
+
+    queue = str(uuid4())
+    async with Worker(
+        environment.client,
+        task_queue=queue,
+        workflows=[Workflow],
+        activities=[flights, sample_stays],
+    ):
+        handle = await environment.client.start_workflow(
+            Workflow.run, live(session_input), id=str(uuid4()), task_queue=queue
+        )
+        result = await handle.result()
+    assert result.itinerary and result.itinerary.trips[0].journey
+    assert result.itinerary.trips[0].stay
+    assert len(searched_dates) == 2
+    await replay(handle)
 
 
 @pytest.mark.parametrize("first_kind", ["flight", "stay"])

@@ -1,10 +1,12 @@
+from datetime import timedelta
+
 import pytest
 from pydantic import ValidationError
 
 from cpfc_trip.catalog import load_catalog
 from cpfc_trip.domain import Brief, Party
 from cpfc_trip.origins import airports_for, routes_for_origin
-from cpfc_trip.planner.planning import enumerate_specs, feasible
+from cpfc_trip.planner.planning import enumerate_specs, feasible, grow_preview
 from cpfc_trip.planner.recorded import sample
 
 
@@ -20,6 +22,36 @@ def test_catalog_fails_closed(session_input):
         )
         == 2
     )
+
+
+def test_preview_only_grows_with_matching_dates(session_input):
+    s = enumerate_specs(session_input.brief, session_input.fixtures, session_input.routes, True)[0]
+    flights, stays = sample(s, "flight"), sample(s, "stay")
+
+    def grow(current, found):
+        return grow_preview(
+            current,
+            session_input.fixtures,
+            {s.fixture.id: found},
+            session_input.routes,
+            session_input.brief,
+        )
+
+    stay_first, journey_found = grow(None, [stays])
+    assert stay_first and stay_first.stay and stay_first.journey is None
+    assert not journey_found
+
+    stay = stays.stays[0]
+    later_stay = stay_first.model_copy(
+        update={"stay": stay.model_copy(update={"check_in": stay.check_in + timedelta(days=1)})}
+    )
+    kept, journey_found = grow(later_stay, [flights])
+    assert journey_found
+    assert kept is later_stay
+
+    both, _ = grow(stay_first, [stays, flights])
+    assert both and both.stay == stay and both.journey == flights.journeys[0]
+    assert grow(both, [])[0] is both
 
 
 def test_constraints_and_kickoff_gate(session_input):

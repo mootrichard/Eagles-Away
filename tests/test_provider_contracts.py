@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -527,3 +528,164 @@ async def test_hotel_shortlist_considers_stadium_location_within_first_40(sessio
     assert len(requested_details) == 2
     assert any("near-stadium" in url for url in requested_details)
     assert all("after-first-40" not in url for url in requested_details)
+
+
+def warsaw_spec(session_input):
+    fixtures, routes = load_catalog()
+    route = next(route for route in routes if route.id == "london-waw")
+    fixture = next(fixture for fixture in fixtures if fixture.id == route.fixture_id)
+    return spec(session_input).model_copy(
+        update={
+            "fixture": fixture,
+            "route": route,
+            "outbound_date": date(2026, 12, 9),
+            "return_date": date(2026, 12, 11),
+        }
+    )
+
+
+def warsaw_booking() -> dict:
+    booking = data("flight-booking")
+    booking["search_parameters"].update(outbound_date="2026-12-09", return_date="2026-12-11")
+    legs = []
+
+    def collect(node: object) -> None:
+        if isinstance(node, dict):
+            if "departure_airport" in node:
+                legs.append(node)
+            for value in node.values():
+                collect(value)
+        elif isinstance(node, list):
+            for value in node:
+                collect(value)
+
+    collect(booking)
+    outbound, inbound = legs
+    outbound["departure_airport"]["date"] = outbound["arrival_airport"]["date"] = "2026-12-09"
+    outbound["arrival_airport"]["id"] = inbound["departure_airport"]["id"] = "WAW"
+    # An evening return leaves the required transfer time after the train back to Warsaw.
+    inbound["departure_airport"].update(date="2026-12-11", time="20:55")
+    inbound["arrival_airport"].update(date="2026-12-11", time="22:35")
+    return booking
+
+
+def warsaw_train(query: str) -> dict:
+    outward = "from Warsaw" in query
+    day = "2026-12-09" if outward else "2026-12-11"
+    start, end = (
+        ("Warsaw Central", "Zielone Wzgórza") if outward else ("Zielone Wzgórza", "Warsaw Central")
+    )
+    departure, arrival = (
+        (f"{day}T15:00:00+01:00", f"{day}T17:30:00+01:00")
+        if outward
+        else (f"{day}T14:00:00+01:00", f"{day}T16:30:00+01:00")
+    )
+    return {
+        "train_results": {
+            "origin": "Warsaw" if outward else "Białystok",
+            "destination": "Białystok" if outward else "Warsaw",
+            "date": day,
+            "trains": [
+                {
+                    "transfers": 0,
+                    "time_window": {"depart_at_iso": departure, "arrive_at_iso": arrival},
+                    "instructions": [
+                        {
+                            "depart_from": {"place": start, "at_iso": departure},
+                            "arrive_at": {"place": end, "at_iso": arrival},
+                            "service_provider": {
+                                "name": "PKP Intercity",
+                                "website": "https://www.intercity.pl/pl/",
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    }
+
+
+async def test_bialystok_trains_are_fetched_during_the_flight_token_chain(session_input, settings):
+    from pydantic import SecretStr
+
+    from cpfc_trip.planner.providers.searchapi import search_flights
+
+    train_queries: list[str] = []
+    trains_requested = asyncio.Event()
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        params = request.url.params
+        if params["engine"] == "google":
+            train_queries.append(params["q"])
+            if len(train_queries) == 2:
+                trains_requested.set()
+            return httpx.Response(200, json=warsaw_train(params["q"]))
+        if "booking_token" in params:
+            # Train times only need the dates; they must not wait for the slow booking step.
+            await asyncio.wait_for(trains_requested.wait(), timeout=2)
+            return httpx.Response(200, json=warsaw_booking())
+        if "departure_token" in params:
+            return httpx.Response(200, json={"best_flights": [{"booking_token": "return"}]})
+        return httpx.Response(200, json={"best_flights": [{"departure_token": "out"}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        api = SearchApi(
+            client, settings.model_copy(update={"searchapi_api_key": SecretStr("test-secret")})
+        )
+        result = await search_flights(api, warsaw_spec(session_input))
+    assert result.calls == 5
+    assert len(train_queries) == 2
+    assert result.journeys and result.journeys[0].outbound[-1].destination == "Zielone Wzgórza"
+    assert result.journeys[0].inbound[0].origin == "Zielone Wzgórza"
+
+
+async def test_failed_train_prefetch_does_not_hide_the_flight_gap(session_input, settings):
+    from pydantic import SecretStr
+
+    from cpfc_trip.planner.providers.searchapi import search_flights
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.params["engine"] == "google":
+            return httpx.Response(400)
+        return httpx.Response(200, json={"error": "Google Flights didn't return any results."})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        api = SearchApi(
+            client, settings.model_copy(update={"searchapi_api_key": SecretStr("test-secret")})
+        )
+        result = await search_flights(api, warsaw_spec(session_input))
+    assert not result.journeys
+    assert result.gaps == (
+        "No nonstop or suitable one-stop flights were found for this route and date pair.",
+    )
+
+
+async def test_shortlisted_property_details_are_checked_together(session_input, settings):
+    from pydantic import SecretStr
+
+    from cpfc_trip.planner.providers.searchapi import search_stays
+
+    search = data("hotels")
+    prop = search["properties"][0]
+    search["properties"] = [prop, {**prop, "property_id": "another-property"}]
+    detail_requests = 0
+    both_requested = asyncio.Event()
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal detail_requests
+        if request.url.params["engine"] == "booking":
+            return httpx.Response(200, json=search)
+        detail_requests += 1
+        if detail_requests == 2:
+            both_requested.set()
+        # A sequential check would never send the second request while the first waits.
+        await asyncio.wait_for(both_requested.wait(), timeout=2)
+        return httpx.Response(200, json=data("hotel-detail"))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        api = SearchApi(
+            client, settings.model_copy(update={"searchapi_api_key": SecretStr("test-secret")})
+        )
+        batch = await search_stays(api, spec(session_input))
+    assert batch.calls == 3
+    assert len(batch.stays) == 2

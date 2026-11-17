@@ -165,6 +165,85 @@ def feasible_journey(
     return True
 
 
+def grow_preview(
+    current: Trip | None,
+    fixtures: tuple[Fixture, ...],
+    batches: dict[str, list[SearchBatch]],
+    routes: tuple[Route, ...],
+    brief: Brief,
+) -> tuple[Trip | None, bool]:
+    """Add a found journey or stay to the in-progress preview, never dropping one already shown.
+
+    A stay joins a journey only when their dates pair up as `feasible` requires. Also returns
+    whether any feasible journey exists yet, which starts the workflow's search cutoff.
+    """
+    journeys = {
+        f.id: [
+            j
+            for b in batches[f.id]
+            for j in b.journeys
+            if (route := next((r for r in routes if r.id == j.route_id), None))
+            and feasible_journey(j, f, brief, route)
+        ]
+        for f in fixtures
+    }
+    journey_found = any(journeys.values())
+    candidates = (
+        [current.fixture] if current else sorted(fixtures, key=lambda f: not journeys[f.id])
+    )
+    for fixture in candidates:
+        journey = current.journey if current else None
+        stay = current.stay if current else None
+        if journey is None:
+            journey = next(
+                (
+                    j
+                    for j in journeys[fixture.id]
+                    if stay is None or feasible(j, stay, fixture, brief)
+                ),
+                None,
+            )
+        if stay is None:
+            stay = next(
+                (
+                    s
+                    for b in batches[fixture.id]
+                    for s in b.stays
+                    if (
+                        feasible(journey, s, fixture, brief)
+                        if journey
+                        else feasible_stay(s, fixture, brief)
+                    )
+                ),
+                None,
+            )
+        if current and journey == current.journey and stay == current.stay:
+            return current, journey_found
+        if journey and stay:
+            return Trip(
+                fixture=fixture,
+                journey=journey,
+                stay=stay,
+                summary="A dated journey and stay were found. We’re still comparing options.",
+                gaps=("Local transfers and alternatives are still being checked.",),
+            ), journey_found
+        if journey:
+            return Trip(
+                fixture=fixture,
+                journey=journey,
+                summary="A dated return journey was found. We’re still checking accommodation and other options.",
+                gaps=("Accommodation and local transfers are still being checked.",),
+            ), journey_found
+        if stay:
+            return Trip(
+                fixture=fixture,
+                stay=stay,
+                summary="A dated stay was found. We’re still checking return travel.",
+                gaps=("Return travel is still being checked.",),
+            ), journey_found
+    return current, journey_found
+
+
 def rank(journey: Journey, stay: Stay, party: Party, tier: str) -> float:
     legs = journey.outbound + journey.inbound
     cost, coverage = total([*(x.quote for x in legs), stay.quote], party)

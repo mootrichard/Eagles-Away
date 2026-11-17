@@ -1,6 +1,6 @@
 export default function Privacy() {
   return (
-    <article className="plan panel">
+    <article className="plan card plain">
       <p className="eyebrow">PRIVACY & YOUR DATA</p>
       <h1>Your data</h1>
       <p>

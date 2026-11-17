@@ -33,6 +33,10 @@ from cpfc_trip.planner.prices import money
 ENDPOINT = "https://www.searchapi.io/api/v1/search"
 REQUEST_CAPS = {"flight": 8, "rail": 8, "stay": 8}
 SEARCH_ACTIVITY_ATTEMPTS = 2
+REQUEST_TIMEOUT_SECONDS = 20
+# Live Booking.com property pages returned within 8.2 seconds in November 2026 checks.
+# A hung page should not hold the whole stay search for the generic timeout.
+ENGINE_TIMEOUT_SECONDS = {"booking_property": 12}
 
 
 class ProviderError(Exception):
@@ -71,7 +75,12 @@ class SearchApi:
                     headers={
                         "Authorization": f"Bearer {self.settings.searchapi_api_key.get_secret_value()}"
                     },
-                    timeout=min(20, remaining),
+                    timeout=min(
+                        ENGINE_TIMEOUT_SECONDS.get(
+                            str(params.get("engine")), REQUEST_TIMEOUT_SECONDS
+                        ),
+                        remaining,
+                    ),
                 )
                 response.raise_for_status()
                 if len(response.content) > 4_000_000:
@@ -252,7 +261,45 @@ def normalize_flights(data: dict[str, Any], spec: SearchSpec, checked: datetime)
     )
 
 
-async def _search_flights_for_stops(api: SearchApi, spec: SearchSpec, stops: str) -> SearchBatch:
+WarsawTrains = tuple[tuple[Leg, ...], tuple[Leg, ...]]
+
+
+def _onward_to_bialystok(spec: SearchSpec) -> bool:
+    return spec.route.onward_stations == ("Warsaw", "Białystok")
+
+
+async def _warsaw_trains(api: SearchApi, spec: SearchSpec) -> WarsawTrains:
+    outward, inbound = await asyncio.gather(
+        api.get(
+            {
+                "engine": "google",
+                "q": f"trains from Warsaw to Białystok on {spec.outbound_date:%d %B %Y}",
+                "gl": "uk",
+                "hl": "en",
+            }
+        ),
+        api.get(
+            {
+                "engine": "google",
+                "q": f"trains from Białystok to Warsaw on {spec.return_date:%d %B %Y}",
+                "gl": "uk",
+                "hl": "en",
+            }
+        ),
+    )
+    checked = datetime.now(UTC)
+    return (
+        normalize_trains(outward, "Warsaw", "Białystok", str(spec.outbound_date), checked),
+        normalize_trains(inbound, "Białystok", "Warsaw", str(spec.return_date), checked),
+    )
+
+
+async def _search_flights_for_stops(
+    api: SearchApi,
+    spec: SearchSpec,
+    stops: str,
+    onward_rail: asyncio.Task[WarsawTrains] | None,
+) -> SearchBatch:
     p = dict(
         engine="google_flights",
         departure_id=spec.route.origin,
@@ -276,7 +323,7 @@ async def _search_flights_for_stops(api: SearchApi, spec: SearchSpec, stops: str
                 f"No {stops.replace('_', ' ')} flights were found for this route and date pair.",
             ),
         )
-    onward = spec.route.onward_stations == ("Warsaw", "Białystok")
+    onward = onward_rail is not None
     choices = [
         item
         for item in initial.get("best_flights", []) + initial.get("other_flights", [])
@@ -310,32 +357,8 @@ async def _search_flights_for_stops(api: SearchApi, spec: SearchSpec, stops: str
                 continue
             selected = await api.get({**p, "booking_token": token})
             result = normalize_flights(selected, spec, datetime.now(UTC))
-            if onward and result.journeys:
-                outward, inbound = await asyncio.gather(
-                    api.get(
-                        {
-                            "engine": "google",
-                            "q": f"trains from Warsaw to Białystok on {spec.outbound_date:%d %B %Y}",
-                            "gl": "uk",
-                            "hl": "en",
-                        }
-                    ),
-                    api.get(
-                        {
-                            "engine": "google",
-                            "q": f"trains from Białystok to Warsaw on {spec.return_date:%d %B %Y}",
-                            "gl": "uk",
-                            "hl": "en",
-                        }
-                    ),
-                )
-                checked = datetime.now(UTC)
-                out_legs = normalize_trains(
-                    outward, "Warsaw", "Białystok", str(spec.outbound_date), checked
-                )
-                in_legs = normalize_trains(
-                    inbound, "Białystok", "Warsaw", str(spec.return_date), checked
-                )
+            if onward_rail is not None and result.journeys:
+                out_legs, in_legs = await onward_rail
                 for flight in result.journeys:
                     journeys.extend(
                         connect_onward_rail(
@@ -363,21 +386,34 @@ async def _search_flights_for_stops(api: SearchApi, spec: SearchSpec, stops: str
 async def search_flights(api: SearchApi, spec: SearchSpec) -> SearchBatch:
     if any(a < 2 for a in spec.party.child_ages):
         return SearchBatch(gaps=("Infant flight pricing is not yet supported.",))
-    direct = await _search_flights_for_stops(api, spec, "nonstop")
-    if direct.journeys:
-        return direct
-    if api.calls >= api.limit or asyncio.get_running_loop().time() >= api.deadline:
+    # Onward train times depend only on the travel dates, so they are fetched while the
+    # sequential flight token chain runs instead of after it.
+    onward_rail = (
+        asyncio.create_task(_warsaw_trains(api, spec)) if _onward_to_bialystok(spec) else None
+    )
+    try:
+        direct = await _search_flights_for_stops(api, spec, "nonstop", onward_rail)
+        if direct.journeys:
+            return direct
+        if api.calls >= api.limit or asyncio.get_running_loop().time() >= api.deadline:
+            return SearchBatch(
+                calls=api.calls,
+                gaps=("No complete flight was verified within the search limits.",),
+            )
+        connected = await _search_flights_for_stops(api, spec, "one_stop_or_fewer", onward_rail)
+        if connected.journeys:
+            return connected
         return SearchBatch(
             calls=api.calls,
-            gaps=("No complete flight was verified within the search limits.",),
+            gaps=(
+                "No nonstop or suitable one-stop flights were found for this route and date pair.",
+            ),
         )
-    connected = await _search_flights_for_stops(api, spec, "one_stop_or_fewer")
-    if connected.journeys:
-        return connected
-    return SearchBatch(
-        calls=api.calls,
-        gaps=("No nonstop or suitable one-stop flights were found for this route and date pair.",),
-    )
+    finally:
+        if onward_rail is not None:
+            onward_rail.cancel()
+            # Retrieve the outcome so a failed or cancelled prefetch is never left dangling.
+            await asyncio.gather(onward_rail, return_exceptions=True)
 
 
 def normalize_stay(
@@ -527,7 +563,6 @@ async def search_stays(api: SearchApi, spec: SearchSpec) -> SearchBatch:
         if token:
             p["filters"] = token
             search = await api.get(p)
-    stays = []
     properties = [
         prop
         for prop in search.get("properties", [])[:40]
@@ -554,12 +589,13 @@ async def search_stays(api: SearchApi, spec: SearchSpec) -> SearchBatch:
         return cost + penalty * quality_weight + distance_penalty
 
     properties.sort(key=property_rank)
-    for prop in properties[:2]:
+
+    async def check(prop: dict[str, Any]) -> Stay | None:
         url = hotel_url(
             prop.get("link", ""), str(spec.outbound_date), str(spec.return_date), spec.party
         )
         if not url:
-            continue
+            return None
         try:
             details = await api.get(
                 {
@@ -568,12 +604,15 @@ async def search_stays(api: SearchApi, spec: SearchSpec) -> SearchBatch:
                     if k not in {"q", "sort_by"}
                 }
             )
-            item = normalize_stay(prop, details, search, spec, datetime.now(UTC))
-            if item:
-                stays.append(item)
+            return normalize_stay(prop, details, search, spec, datetime.now(UTC))
         except (ProviderError, KeyError, ValueError):
             # One unavailable property must not erase already checked rooms.
-            continue
+            return None
+
+    # Shortlisted property pages are independent; check them together, keeping rank order.
+    async with asyncio.TaskGroup() as group:
+        checks = [group.create_task(check(prop)) for prop in properties[:2]]
+    stays = [stay for task in checks if (stay := task.result())]
     return SearchBatch(
         stays=tuple(stays),
         calls=api.calls,

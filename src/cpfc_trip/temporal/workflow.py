@@ -12,7 +12,12 @@ with workflow.unsafe.imports_passed_through():
     from temporalio.common import RetryPolicy
 
     from cpfc_trip.domain import Itinerary, SearchBatch, SearchSpec, SessionInput, Snapshot, Trip
-    from cpfc_trip.planner.planning import choose, enumerate_specs, feasible_journey, feasible_stay
+    from cpfc_trip.planner.planning import (
+        choose,
+        enumerate_specs,
+        feasible_journey,
+        grow_preview,
+    )
     from cpfc_trip.planner.providers.searchapi import (
         REQUEST_CAPS,
         SEARCH_ACTIVITY_ATTEMPTS,
@@ -76,44 +81,22 @@ class TravelPlanningSessionWorkflow:
 
         def show_partial_trip() -> None:
             nonlocal first_journey_at
-            if self.state.preview_trip is not None and self.state.preview_trip.journey:
-                return
-            for fixture in self.data.fixtures:
-                for batch in batches[fixture.id]:
-                    for journey in batch.journeys:
-                        route = next(
-                            (item for item in self.data.routes if item.id == journey.route_id),
-                            None,
-                        )
-                        if route and feasible_journey(journey, fixture, brief, route):
-                            first_journey_at = workflow.now()
-                            self.change(
-                                preview_trip=Trip(
-                                    fixture=fixture,
-                                    journey=journey,
-                                    summary="A dated return journey was found. We’re still checking accommodation and other options.",
-                                    gaps=(
-                                        "Accommodation and local transfers are still being checked.",
-                                    ),
-                                ),
-                                progress_message="A journey was found. Checking stays and alternatives…",
-                            )
-                            return
-            if self.state.preview_trip is None:
-                for fixture in self.data.fixtures:
-                    for batch in batches[fixture.id]:
-                        for stay in batch.stays:
-                            if feasible_stay(stay, fixture, brief):
-                                self.change(
-                                    preview_trip=Trip(
-                                        fixture=fixture,
-                                        stay=stay,
-                                        summary="A dated stay was found. We’re still checking return travel.",
-                                        gaps=("Return travel is still being checked.",),
-                                    ),
-                                    progress_message="A stay was found. Checking return travel…",
-                                )
-                                return
+            preview, journey_found = grow_preview(
+                self.state.preview_trip, self.data.fixtures, batches, self.data.routes, brief
+            )
+            if journey_found and first_journey_at is None:
+                first_journey_at = workflow.now()
+            if preview is not None and preview is not self.state.preview_trip:
+                self.change(
+                    preview_trip=preview,
+                    progress_message=(
+                        "A journey and stay were found. Comparing options…"
+                        if preview.journey and preview.stay
+                        else "A journey was found. Checking stays and alternatives…"
+                        if preview.journey
+                        else "A stay was found. Checking return travel…"
+                    ),
+                )
 
         async def acquire_job(
             key: str, kind: str, spec: SearchSpec, cap: int
@@ -143,14 +126,29 @@ class TravelPlanningSessionWorkflow:
             return key, kind, spec.fixture.id, response, cap, known_calls
 
         trips: tuple[Trip, ...] = ()
-        for wave_index, wave in enumerate(waves):
+        # The first comparison wave always ran once the first wave finished in time.
+        # Starting both together keeps the same searches but takes one sequential
+        # provider round-trip off the critical path. A comparison search that does not
+        # fit the call budget yet waits for the next round instead of being dropped.
+        parallel_comparison = workflow.patched("parallel-comparison-wave")
+        rounds = list(waves)
+        started_waves = 0
+        while rounds:
+            wave = rounds.pop(0)
+            comparison = (
+                rounds.pop(0) if parallel_comparison and started_waves == 0 and rounds else []
+            )
             if (
                 self.data.planner_mode != "recorded"
                 and (deadline - workflow.now()).total_seconds() <= 2
             ):
                 break
             jobs: list[tuple[str, str, SearchSpec, int]] = []
-            for spec in wave:
+            deferred: list[SearchSpec] = []
+            for spec, is_comparison in [
+                *((spec, False) for spec in wave),
+                *((spec, True) for spec in comparison),
+            ]:
                 for kind in (spec.route.mode, "stay"):
                     if self.data.planner_mode == "recorded":
                         response = sample(spec, kind)
@@ -173,12 +171,19 @@ class TravelPlanningSessionWorkflow:
                     )
                     if key in seen:
                         continue
-                    seen.add(key)
                     cap = REQUEST_CAPS[kind] * SEARCH_ACTIVITY_ATTEMPTS
                     if used + cap > self.data.limits.search_calls:
+                        if not is_comparison:
+                            seen.add(key)
+                        elif spec not in deferred:
+                            deferred.append(spec)
                         continue
+                    seen.add(key)
                     used += cap
                     jobs.append((key, kind, spec, cap))
+            started_waves += 1 + bool(comparison)
+            if deferred:
+                rounds.insert(0, deferred)
             timed_out = False
             show_partial_trip()
             if jobs:
@@ -213,7 +218,9 @@ class TravelPlanningSessionWorkflow:
             )
             if (
                 timed_out
-                or (wave_index >= 1 and all(t.journey and t.stay for t in trips))
+                or (
+                    started_waves >= 2 and not deferred and all(t.journey and t.stay for t in trips)
+                )
                 or (
                     first_journey_at is not None
                     and workflow.now() >= first_journey_at + timedelta(seconds=30)
