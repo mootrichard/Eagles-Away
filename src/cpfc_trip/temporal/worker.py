@@ -9,7 +9,6 @@ from temporalio.worker import Worker, WorkerDeploymentConfig
 from cpfc_trip.config import Settings
 from cpfc_trip.persistence.database import engine
 from cpfc_trip.persistence.search_cache import SearchCache
-from cpfc_trip.planner.agent import configure_model, model
 from cpfc_trip.temporal.activities import SearchActivities
 from cpfc_trip.temporal.client import connect
 from cpfc_trip.temporal.workflow import TravelPlanningSessionWorkflow
@@ -17,8 +16,6 @@ from cpfc_trip.temporal.workflow import TravelPlanningSessionWorkflow
 
 async def run() -> None:
     settings = Settings()
-    if settings.planner_mode == "live":
-        await configure_model(settings)
     db = engine(settings)
     try:
         client = await connect(settings)
@@ -55,10 +52,8 @@ async def run() -> None:
             await stop.wait()
     finally:
         await db.dispose()
-        await model.client.aio.aclose()
 
 
 def main() -> None:
     logging.basicConfig(level=logging.WARNING)
-    logging.getLogger("cpfc_trip.model_usage").setLevel(logging.INFO)
     asyncio.run(run())

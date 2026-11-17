@@ -76,10 +76,9 @@ describe("trip brief steps", () => {
     fireEvent.click(screen.getByRole("button", { name: /Continue to travel preferences/ }));
     expect(screen.getByRole("heading", { name: "How do you like to travel?" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "More adults" }));
-    fireEvent.click(screen.getByRole("button", { name: /Review your trip/ }));
-    expect(screen.getByRole("heading", { name: "Review your trip" })).toBeVisible();
-    expect(screen.getByText(/2 adults/)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: /Back/ }));
+    expect(screen.getByRole("heading", { name: "Pick your match" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /Continue to travel preferences/ }));
     await waitFor(() => expect(screen.getByLabelText("Adults")).toHaveValue("2"));
   });
 
@@ -109,11 +108,8 @@ describe("trip brief steps", () => {
     chooseOrigin("Manchester");
     fireEvent.click(screen.getByRole("button", { name: /Continue to travel preferences/ }));
     fireEvent.click(travelBy("Trains"));
-    fireEvent.click(screen.getByRole("button", { name: /Review your trip/ }));
-    expect(screen.queryByRole("textbox", { name: "Email address" })).not.toBeInTheDocument();
     const body = await submittedBody();
-    expect(body).not.toHaveProperty("email");
-    expect(body.brief).toMatchObject({ origin_city: "Manchester", transport_mode: "rail", extra_instructions: "" });
+    expect(body.brief).toMatchObject({ origin_city: "Manchester", transport_mode: "rail" });
   });
 
   it("labels each trip length with the dates searched for the chosen match", async () => {
@@ -149,8 +145,6 @@ describe("trip brief steps", () => {
     next();
     fireEvent.click(screen.getByRole("switch", { name: "Private room" }));
     fireEvent.click(screen.getByRole("radio", { name: /Comfort/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Review your trip/ }));
-    expect(screen.getByText("Wed 14 Oct – Fri 16 Oct")).toBeVisible();
     const body = await submittedBody();
     expect(body.brief).toMatchObject({
       flexibility: "day_either_side",
@@ -174,7 +168,6 @@ describe("trip brief steps", () => {
     expect(travelBy("Flights")).toBeChecked();
     expect(travelBy("Trains")).toBeDisabled();
     expect(screen.getByText(/Trains are available for Lyon only/)).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: /Review your trip/ }));
     expect((await submittedBody()).brief).toMatchObject({ fixture_ids: ["uel-2026-besiktas-away"], transport_mode: "flight" });
   });
 

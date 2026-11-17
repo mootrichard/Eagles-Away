@@ -31,7 +31,7 @@ class Repository:
                 select(SessionRow).where(SessionRow.submission_id == str(request.submission_id))
             )
             if old:
-                if old.deleted_at or not hmac.compare_digest(old.access_hash, digest(token)):
+                if not hmac.compare_digest(old.access_hash, digest(token)):
                     raise PermissionError("Submission is not accessible")
                 if old.request_hash != fingerprint:
                     raise ValueError("Submission ID was already used with a different brief")
@@ -93,8 +93,4 @@ class Repository:
     async def authorize(self, sid: UUID, token: str) -> bool:
         async with self.sessions() as db:
             row = await db.get(SessionRow, str(sid))
-            return bool(
-                row
-                and row.deleted_at is None
-                and hmac.compare_digest(row.access_hash, digest(token))
-            )
+            return bool(row and hmac.compare_digest(row.access_hash, digest(token)))

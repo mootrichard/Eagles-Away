@@ -55,40 +55,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/sessions/{public_id}/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Message */
-        post: operations["message_api_sessions__public_id__messages_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/sessions/{public_id}/close": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Close */
-        post: operations["close_api_sessions__public_id__close_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -175,11 +141,6 @@ export interface components {
              */
             windows: components["schemas"]["Window"][];
             /**
-             * Extra Instructions
-             * @default
-             */
-            extra_instructions: string;
-            /**
              * Private Room
              * @default false
              */
@@ -191,38 +152,6 @@ export interface components {
             private_bathroom: boolean;
             /** Transport Mode */
             transport_mode?: ("flight" | "rail") | null;
-        };
-        /** ChatTurn */
-        ChatTurn: {
-            /** Id */
-            id: string;
-            /**
-             * Turn Id
-             * Format: uuid
-             */
-            turn_id: string;
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "user" | "assistant";
-            /** Content */
-            content: string;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-        };
-        /** Command */
-        Command: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Expected Revision */
-            expected_revision?: number | null;
         };
         /** Coordinates */
         Coordinates: {
@@ -303,8 +232,6 @@ export interface components {
         };
         /** Itinerary */
         Itinerary: {
-            /** Revision */
-            revision: number;
             /**
              * Generated At
              * Format: date-time
@@ -390,18 +317,6 @@ export interface components {
             /** Url */
             url: string;
         };
-        /** MessageCommand */
-        MessageCommand: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Expected Revision */
-            expected_revision?: number | null;
-            /** Text */
-            text: string;
-        };
         /** Money */
         Money: {
             /** Minor Units */
@@ -481,22 +396,6 @@ export interface components {
              */
             caveats: string[];
         };
-        /** Receipt */
-        Receipt: {
-            /**
-             * Command Id
-             * Format: uuid
-             */
-            command_id: string;
-            /** Accepted */
-            accepted: boolean;
-            /**
-             * Reason
-             * @default accepted
-             * @enum {string}
-             */
-            reason: "accepted" | "busy" | "closed" | "stale";
-        };
         /** Snapshot */
         Snapshot: {
             /**
@@ -524,7 +423,7 @@ export interface components {
              * @default created
              * @enum {string}
              */
-            phase: "created" | "researching" | "draft_ready" | "revising" | "finalizing" | "closed" | "failed";
+            phase: "created" | "researching" | "closed" | "failed";
             /**
              * Progress Message
              * @default Checking routes from London…
@@ -532,27 +431,6 @@ export interface components {
             progress_message: string;
             itinerary?: components["schemas"]["Itinerary"] | null;
             preview_trip?: components["schemas"]["Trip"] | null;
-            /**
-             * Transcript Tail
-             * @default []
-             */
-            transcript_tail: components["schemas"]["ChatTurn"][];
-            /** Active Turn Id */
-            active_turn_id?: string | null;
-            /** Last Committed Turn Id */
-            last_committed_turn_id?: string | null;
-            /**
-             * Interaction Deadline
-             * Format: date-time
-             */
-            interaction_deadline: string;
-            /**
-             * Follow Ups Remaining
-             * @default 10
-             */
-            follow_ups_remaining: number;
-            /** Finalization Reason */
-            finalization_reason?: ("manual" | "inactivity" | "limit" | "planning_failed") | null;
         };
         /** Stay */
         Stay: {
@@ -772,76 +650,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Snapshot"] | null;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    message_api_sessions__public_id__messages_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                public_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["MessageCommand"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Receipt"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    close_api_sessions__public_id__close_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                public_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["Command"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Receipt"];
                 };
             };
             /** @description Validation Error */

@@ -5,15 +5,10 @@ import type { Snapshot } from "./api";
 // a step finished that the backend has not actually passed.
 export type Stage = "preferences" | "searching" | "done" | "failed";
 
-export function stageFor(
-  snapshot: Snapshot | null,
-  opts: { ignoreItinerary?: boolean } = {},
-): Stage {
+export function stageFor(snapshot: Snapshot | null): Stage {
   if (!snapshot) return "preferences";
-  // Revisions keep the previous itinerary on screen, so callers that track an in-flight
-  // revision ask us to ignore itinerary presence and read the live progress instead.
-  if (!opts.ignoreItinerary && (snapshot.itinerary || snapshot.phase === "draft_ready")) return "done";
-  if (["failed", "closed"].includes(snapshot.phase as string) && !snapshot.itinerary) return "failed";
+  if (snapshot.itinerary) return "done";
+  if (snapshot.phase === "failed" || snapshot.phase === "closed") return "failed";
   if (snapshot.preview_trip || /compar/i.test(snapshot.progress_message)) return "searching";
   return "preferences";
 }

@@ -10,8 +10,8 @@ export default function Privacy() {
       <h2>Planning and saved results</h2>
       <p>
         We store your trip preferences, planning session and saved itinerary so the request can
-        recover from interruptions. Our planning model and travel search provider receive the
-        details needed to search. DigitalOcean hosts the app and database; Temporal runs its
+        recover from interruptions. Our travel search provider receives the details needed to
+        search. DigitalOcean hosts the app and database; Temporal runs its
         workflows. A necessary session cookie lets this browser access your saved plan.
       </p>
       <p>

@@ -8,7 +8,7 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 from uuid import UUID
 
 import uvicorn
@@ -18,19 +18,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
-from temporalio.client import (
-    Client,
-    WorkflowExecutionStatus,
-    WorkflowQueryFailedError,
-    WorkflowUpdateFailedError,
-)
+from temporalio.client import Client, WorkflowExecutionStatus, WorkflowQueryFailedError
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError
 
 from cpfc_trip.catalog import load_catalog
 from cpfc_trip.config import Settings
-from cpfc_trip.domain import Command, CreateSession, MessageCommand, Receipt, Snapshot
+from cpfc_trip.domain import CreateSession, Snapshot
 from cpfc_trip.origins import LIVE_ORIGINS, UK_RAIL
 from cpfc_trip.persistence.database import engine
 from cpfc_trip.persistence.repository import Repository
@@ -229,7 +224,7 @@ def create_app(
                 rpc_timeout=timedelta(seconds=5),
             )
         except (RPCError, WorkflowQueryFailedError):
-            # Completed V3 results remain readable after their pinned workers retire.
+            # Completed results stay readable after the worker build that ran them retires.
             try:
                 description = await handle.describe(rpc_timeout=timedelta(seconds=5))
                 if description.status != WorkflowExecutionStatus.COMPLETED:
@@ -242,37 +237,6 @@ def create_app(
             except (RPCError, WorkflowQueryFailedError):
                 raise HTTPException(503, "Reconnecting to your saved planning session") from None
         return value if value else Response(status_code=204)
-
-    async def update(
-        request: Request, public_id: UUID, command: Command, finalize: bool
-    ) -> Receipt:
-        await authorize(request, public_id)
-        limiter.check(f"command:{public_id}", 20)
-        handle = client(request).get_workflow_handle(f"travel-session/{public_id}")
-        name = "request_finalize" if finalize else "submit_message"
-        try:
-            result = await handle.execute_update(
-                name,
-                command,
-                id=f"{name}/{command.id}",
-                result_type=Receipt,
-                rpc_timeout=timedelta(seconds=5),
-            )
-        except (RPCError, WorkflowUpdateFailedError):
-            raise HTTPException(
-                503, "Could not confirm acceptance. Retry the same command."
-            ) from None
-        if not result.accepted:
-            raise HTTPException(409, result.reason)
-        return cast(Receipt, result)
-
-    @app.post("/api/sessions/{public_id}/messages", response_model=Receipt, status_code=202)
-    async def message(public_id: UUID, body: MessageCommand, request: Request) -> Receipt:
-        return await update(request, public_id, body, False)
-
-    @app.post("/api/sessions/{public_id}/close", response_model=Receipt, status_code=202)
-    async def close(public_id: UUID, body: Command, request: Request) -> Receipt:
-        return await update(request, public_id, body, True)
 
     @app.get("/healthz")
     async def health() -> dict[str, bool]:

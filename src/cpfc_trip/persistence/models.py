@@ -16,9 +16,7 @@ class SessionRow(Base):
     request_hash: Mapped[str] = mapped_column(String(64))
     access_hash: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     workflow_input: Mapped[dict[str, Any]] = mapped_column(JSON)
-    saved_itinerary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
 
 class SearchCacheRow(Base):

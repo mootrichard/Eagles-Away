@@ -1,7 +1,7 @@
 const measurementId = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID;
 const consentKey = "eagles-away-analytics-consent";
 
-type AnalyticsEvent = "form_match_complete" | "form_preferences_complete" | "trip_started" | "plan_ready" | "plan_failed";
+type AnalyticsEvent = "form_match_complete" | "trip_started" | "plan_ready" | "plan_failed";
 type Gtag = (...args: unknown[]) => void;
 
 declare global {

@@ -116,7 +116,7 @@ footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8p
 
 /* Trip brief */
 .brief { padding: var(--panel-padding); }
-.form-progress { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 0 0 var(--space-3); padding: 0; list-style: none; }
+.form-progress { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin: 0 0 var(--space-3); padding: 0; list-style: none; }
 .form-progress li { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .form-progress li::before { content: ""; height: 4px; border-radius: 4px; background: var(--line); }
 .form-progress li.complete::before { background: var(--blue); }
@@ -222,12 +222,6 @@ footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8p
 .switch-row [data-slot="switch"][data-checked] { background: var(--blue); }
 .switch-row [data-slot="switch-thumb"] { width: 26px; height: 26px; background: #fff; box-shadow: 0 2px 4px #0003; transition: margin .2s; }
 
-.review { display: grid; margin: 0; border-radius: 14px; background: var(--fill); }
-.review-row { display: grid; grid-template-columns: 20px 80px minmax(0, 1fr); align-items: center; gap: 12px; padding: 13px 16px; font-size: 15px; }
-.review-row + .review-row { border-top: 1px solid #e6e8eb; }
-.review-row .icon { color: var(--blue); }
-.review-row dt { color: var(--muted); font-size: 13px; }
-.review-row dd { margin: 0; font-weight: 700; }
 .form-actions { display: flex; justify-content: space-between; gap: 10px; }
 .form-actions .primary { flex: 1; }
 .form-actions .secondary { flex: 0 0 auto; }
@@ -389,7 +383,6 @@ footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8p
   .styles { grid-template-columns: 1fr; }
   .style-tile { grid-template-columns: 36px 1fr; column-gap: 8px; padding: 12px 14px; }
   .style-tile b { grid-row: span 2; align-self: center; font-size: 15px; }
-  .review-row { grid-template-columns: 20px 64px minmax(0, 1fr); }
   .plan { padding: var(--space-3) var(--page-gutter) var(--space-5); }
   .plan-heading .tag { padding: 5px 9px; font-size: 12px; }
   .stats dd { font-size: 18px; }

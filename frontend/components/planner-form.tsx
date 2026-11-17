@@ -15,10 +15,10 @@ import { Brief, Fixture, londonDayBoundary, request } from "../lib/api";
 import formCatalog from "../lib/form-catalog.json";
 import { trackAnalytics } from "../lib/analytics";
 import { CPFC_TICKET_URL } from "../lib/tickets";
-import { addDays, country, dateParts, day, dayRange, daysUntil, flag, kickoff, londonDate, matchDay } from "../lib/trip-format";
-import { Icon, type IconName } from "./icons";
+import { addDays, country, dateParts, day, dayRange, daysUntil, flag, kickoff, londonDate } from "../lib/trip-format";
+import { Icon } from "./icons";
 
-const stepNames = ["Match", "Travel", "Review"] as const;
+const stepNames = ["Match", "Travel"] as const;
 const bundledFixtures = formCatalog.fixtures as Fixture[];
 
 type TripLength = Brief["flexibility"] | "custom";
@@ -53,10 +53,6 @@ function Stepper({ label, value, onChange, min, max }: { label: string; value: n
       </NumberInputGroup>
     </NumberInput>
   </Field>;
-}
-
-function ReviewRow({ icon, label, children }: { icon: IconName; label: string; children: React.ReactNode }) {
-  return <div className="review-row"><Icon name={icon} /><dt>{label}</dt><dd>{children}</dd></div>;
 }
 
 export function PlannerForm() {
@@ -116,7 +112,6 @@ export function PlannerForm() {
 
   function moveTo(next: number) {
     if (step === 0 && next === 1) trackAnalytics("form_match_complete");
-    if (step === 1 && next === 2) trackAnalytics("form_preferences_complete");
     setHasNavigated(true);
     setError("");
     setStep(next);
@@ -153,7 +148,7 @@ export function PlannerForm() {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (step !== 2 || !selected) return;
+    if (step !== 1 || !selected) return;
     setBusy(true);
     setError("");
     const customDates = length === "custom" ? range : null;
@@ -167,7 +162,6 @@ export function PlannerForm() {
       private_room: privateRoom,
       private_bathroom: privateBathroom,
       transport_mode: mode,
-      extra_instructions: "",
     };
     const content = JSON.stringify({ brief });
     if (!attempt.current || attempt.current.body !== content) {
@@ -307,24 +301,9 @@ export function PlannerForm() {
           <label className="switch-row"><Icon name="door" />Private room<Switch checked={privateRoom} onCheckedChange={setPrivateRoom}><SwitchThumb /></Switch></label>
           <label className="switch-row"><Icon name="bath" />Private bathroom<Switch checked={privateBathroom} onCheckedChange={setPrivateBathroom}><SwitchThumb /></Switch></label>
         </div>
-        <div className="form-actions">
-          <Button className="secondary" onClick={() => moveTo(0)}><Icon name="arrowLeft" />Back</Button>
-          <Button className="primary" onClick={nextStep}>Review your trip<Icon name="arrowRight" /></Button>
-        </div>
-      </section>
-
-      <section className="form-page" data-form-step="2" hidden={step !== 2} aria-labelledby={step === 2 ? "form-step-heading" : undefined}>
-        {heading(2, "Review your trip")}
-        {selectedFixture && <dl className="review">
-          <ReviewRow icon="ball" label="Match">{selectedFixture.opponent} v Palace · {matchDay(selectedFixture)}</ReviewRow>
-          <ReviewRow icon="pin" label="From">{origin}</ReviewRow>
-          <ReviewRow icon="calendar" label="Dates">{length === "custom" && range ? `${day(range[0])} – ${day(range[1])}` : lengths.find(t => t.value === length)?.hint}</ReviewRow>
-          <ReviewRow icon="users" label="Group">{adults} adult{adults > 1 ? "s" : ""}{children.length ? `, ${children.length} child${children.length > 1 ? "ren" : ""}` : ""} · {rooms} room{rooms > 1 ? "s" : ""}</ReviewRow>
-          <ReviewRow icon={mode === "rail" ? "train" : "plane"} label="Travel">{mode === "rail" ? "Trains" : mode === "flight" ? "Flights" : "Flights and trains"} · {styles.find(s => s.value === budget)?.title}</ReviewRow>
-        </dl>}
         <p className="hint"><Icon name="plane" size={14} />Searching {searchNote}, nonstop first{selectedFixture?.city === "Białystok" ? ", + Warsaw–Białystok train" : ""}.</p>
         <div className="form-actions">
-          <Button className="secondary" onClick={() => moveTo(1)}><Icon name="arrowLeft" />Back</Button>
+          <Button className="secondary" onClick={() => moveTo(0)}><Icon name="arrowLeft" />Back</Button>
           <Button type="submit" className="primary" disabled={!selected || busy}>{busy ? "Starting…" : <>Plan my away day<Icon name="arrowRight" /></>}</Button>
         </div>
         <p className="hint center">No account needed · <Link href="/privacy/">How we use your data</Link></p>

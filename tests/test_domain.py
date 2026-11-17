@@ -6,7 +6,6 @@ from pydantic import ValidationError
 from cpfc_trip.catalog import load_catalog
 from cpfc_trip.domain import Brief, Party
 from cpfc_trip.origins import airports_for, routes_for_origin
-from cpfc_trip.planner.agent import Intent
 from cpfc_trip.planner.planning import enumerate_specs, feasible, grow_preview
 from cpfc_trip.planner.recorded import sample
 
@@ -28,7 +27,6 @@ def test_catalog_fails_closed(session_input):
 def test_preview_only_grows_with_matching_dates(session_input):
     s = enumerate_specs(session_input.brief, session_input.fixtures, session_input.routes, True)[0]
     flights, stays = sample(s, "flight"), sample(s, "stay")
-    intent = Intent(action="revise", answer="")
 
     def grow(current, found):
         return grow_preview(
@@ -37,7 +35,6 @@ def test_preview_only_grows_with_matching_dates(session_input):
             {s.fixture.id: found},
             session_input.routes,
             session_input.brief,
-            intent,
         )
 
     stay_first, journey_found = grow(None, [stays])
@@ -61,8 +58,8 @@ def test_constraints_and_kickoff_gate(session_input):
     s = enumerate_specs(session_input.brief, session_input.fixtures, session_input.routes, True)[0]
     journey = sample(s, "flight").journeys[0]
     stay = sample(s, "stay").stays[0]
-    intent = Intent(action="revise", answer="")
-    assert feasible(journey, stay, s.fixture, session_input.brief, intent)
+    brief = session_input.brief
+    assert feasible(journey, stay, s.fixture, brief)
     late = journey.model_copy(
         update={
             "outbound": (
@@ -70,22 +67,12 @@ def test_constraints_and_kickoff_gate(session_input):
             )
         }
     )
-    assert not feasible(late, stay, s.fixture, session_input.brief, intent)
-    assert not feasible(
-        journey,
-        stay,
-        s.fixture,
-        session_input.brief,
-        intent.model_copy(update={"unsupported_requirements": ("step-free route",)}),
-    )
+    assert not feasible(late, stay, s.fixture, brief)
     dorm = stay.model_copy(update={"room_type": "dorm", "bathroom": "shared"})
-    assert feasible(journey, dorm, s.fixture, session_input.brief, intent)
+    assert feasible(journey, dorm, s.fixture, brief)
+    assert not feasible(journey, dorm, s.fixture, brief.model_copy(update={"private_room": True}))
     assert not feasible(
-        journey,
-        dorm,
-        s.fixture,
-        session_input.brief,
-        intent.model_copy(update={"private_room": True}),
+        journey, dorm, s.fixture, brief.model_copy(update={"private_bathroom": True})
     )
 
 
@@ -144,26 +131,19 @@ def test_uk_departure_city_resolves_without_guessing(session_input):
 
 
 def test_recorded_city_offers_a_rail_example(session_input):
-    brief = session_input.brief.model_copy(
-        update={"origin_city": "Manchester", "transport_mode": "rail"}
-    )
-    specs = enumerate_specs(
-        brief, session_input.fixtures, routes_for_origin(session_input.routes, "Manchester"), True
-    )
+    routes = routes_for_origin(session_input.routes, "Manchester")
+    any_mode = session_input.brief.model_copy(update={"origin_city": "Manchester"})
+    specs = enumerate_specs(any_mode, session_input.fixtures, routes, True)
     assert {spec.route.mode for spec in specs} == {"flight", "rail"}
-    rail = next(spec for spec in specs if spec.route.mode == "rail")
+    brief = any_mode.model_copy(update={"transport_mode": "rail"})
+    specs = enumerate_specs(brief, session_input.fixtures, routes, True)
+    assert {spec.route.mode for spec in specs} == {"rail"}
+    rail = specs[0]
     journey = sample(rail, "rail").journeys[0]
     stay = sample(rail, "stay").stays[0]
     assert journey.outbound[0].mode == "rail"
     assert journey.outbound[0].origin == "Manchester Piccadilly"
-    assert feasible(
-        journey,
-        stay,
-        rail.fixture,
-        brief,
-        Intent(action="revise", answer="", transport_mode="rail"),
-        rail.route,
-    )
+    assert feasible(journey, stay, rail.fixture, brief, rail.route)
 
 
 def test_search_respects_custom_window_and_prioritizes_each_fixture(session_input):
@@ -184,8 +164,3 @@ def test_search_respects_custom_window_and_prioritizes_each_fixture(session_inpu
     assert 1 < len({(s.outbound_date, s.return_date) for s in specs}) <= 3
     assert all(start.date() <= s.outbound_date < s.return_date <= end.date() for s in specs)
     assert any(s.outbound_date == start.date() for s in specs)
-
-
-def test_model_rejects_invalid_airport_code():
-    with pytest.raises(ValidationError):
-        Intent(action="revise", answer="", preferred_airports=("MAN<script>",))

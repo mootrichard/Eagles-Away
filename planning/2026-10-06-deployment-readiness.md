@@ -2,6 +2,26 @@
 
 This is a dated discovery record for the first cloud deployment. It supplements the [approved MVP architecture](mvp-plan.md#infrastructure-and-deployment) and the [engineering handoff](2026-09-30-engineering-handoff.md). No production resources or DNS records were changed during the initial review; later updates are recorded below.
 
+## 17 November 2026 — single-run release without Gemini
+
+Commit `b83910f12de3871779905cf341a4cdcdd12ec33d` removes the review step, follow-up conversation,
+Gemini/Pydantic AI and Google authentication. Temporal clients and workers now use
+`temporalio.contrib.pydantic.pydantic_data_converter`. The worker reads immutable branch
+`codex/worker-release-b83910f`; web and jobs read `main`. The app spec no longer has
+`GOOGLE_AUTH_MODE` or `GEMINI_API_KEY`; runtime secrets are SearchApi and Temporal Cloud only.
+Migration `20261117_0005` drops the unused `saved_itinerary` and `deleted_at` session columns.
+
+The hosted namespace is `gcp-shy-projects.a2dd6` (API-key auth, regional endpoint
+`us-central1.gcp.api.temporal.io:7233`). The local `cloud` CLI profile targets a different namespace;
+the release used a temporary user API key created with `tcld` (24-hour minimum lifetime, about a
+minute to activate) and deleted after promotion.
+
+No trip workflows were running before the direct cutover. Deployment
+`d654a8d3-bdd8-4d48-b7f5-3027077cee0c` reached `ACTIVE` (16/16), including the migration. Both new
+worker replicas polled the workflow and activity queues before build `b83910f` was set Current;
+`6ad51d8` moved to draining. Hosted `/`, `/privacy/`, `/healthz` and `/readyz` returned 200. A live
+London–Białystok trip through the two-step form completed on the new build with a full itinerary.
+
 ## 17 November 2026 — browser-only release
 
 The owner removed email collection and delivery and reported completing the PostgreSQL patch

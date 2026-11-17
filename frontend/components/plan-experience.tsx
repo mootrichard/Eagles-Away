@@ -40,12 +40,11 @@ export function PlanExperience() {
       } catch (e) {
         if (stopped) return;
         failures++;
-        setError(e instanceof ApiError && e.status === 404 ? "This session is unavailable in this browser." : "Reconnecting… Your displayed draft is still saved.");
+        setError(e instanceof ApiError && e.status === 404 ? "This session is unavailable in this browser." : "Reconnecting…");
       } finally {
         inFlight = false;
         if (!stopped && !terminal(current.current)) {
-          const idle = current.current?.phase === "draft_ready" && !current.current.active_turn_id;
-          timer = setTimeout(poll, failures ? Math.min(30000, 2000 * 2 ** failures) : (idle ? 20000 : 2000) + Math.random() * 200);
+          timer = setTimeout(poll, failures ? Math.min(30000, 2000 * 2 ** failures) : 2000 + Math.random() * 200);
         }
       }
     }
@@ -86,7 +85,7 @@ export function PlanExperience() {
       <h1>Your away day</h1>
       <span className="tag"><Icon name="pin" size={14} />From {origin}</span>
     </div>
-    <div className={terminal(snapshot) ? "status" : "status sr-only"} role="status" aria-live="polite">{snapshot?.phase === "failed" ? "We couldn’t complete this trip request." : snapshot?.progress_message ?? "Connecting to your planning session…"}</div>
+    <div className={terminal(snapshot) ? "status" : "status sr-only"} role="status" aria-live="polite">{snapshot?.progress_message ?? "Connecting to your planning session…"}</div>
     {error && <p className="error" role="alert"><Icon name="alert" />{error}</p>}
     {!snapshot?.itinerary && !snapshot?.preview_trip && !terminal(snapshot) && (showHero
       ? <PlanningProgress snapshot={snapshot} city={city} origin={origin} variant="hero" />
@@ -95,6 +94,6 @@ export function PlanExperience() {
     {completing && <PlanningProgress snapshot={snapshot} city={city} origin={origin} variant="hero" forceDone />}
     {terminal(snapshot) && !snapshot?.itinerary && <p className="end-note">{snapshot?.preview_trip ? "Partial results saved." : "No itinerary was saved for this request."}<Link className="text-link" href="/">Try another trip brief<Icon name="arrowRight" size={16} /></Link></p>}
     {snapshot?.itinerary && !completing && <div className="plan-reveal"><ItineraryView itinerary={snapshot.itinerary} /></div>}
-    {snapshot?.itinerary && terminal(snapshot) && <p className="end-note">This planning session has ended.<Link className="text-link" href="/">Start a new trip brief<Icon name="arrowRight" size={16} /></Link></p>}
+    {snapshot?.itinerary && terminal(snapshot) && <p className="end-note"><Link className="text-link" href="/">Start a new trip brief<Icon name="arrowRight" size={16} /></Link></p>}
   </div>;
 }
