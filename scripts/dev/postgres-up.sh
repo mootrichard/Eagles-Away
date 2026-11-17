@@ -6,5 +6,6 @@ cd "${repo_root}"
 
 docker compose up --detach --wait postgres
 uv run --locked cpfc-db upgrade
-echo "PostgreSQL is ready and migrated at localhost:${POSTGRES_PORT:-5432}."
+port="$(docker compose port postgres 5432)"
+echo "PostgreSQL is ready and migrated at ${port}. DATABASE_URL in .env must use port ${port##*:}."
 

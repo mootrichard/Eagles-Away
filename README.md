@@ -34,7 +34,9 @@ scripts/dev/frontend.sh
 
 Open [localhost:3000](http://localhost:3000). A fresh checkout uses recorded sample trips, so you can explore the app without paid travel searches.
 
-To check a change, stop the frontend development server and run `scripts/check.sh`. For the PostgreSQL checks too, use `TEST_DATABASE_URL=postgresql+asyncpg://cpfc:cpfc@localhost:5432/cpfc scripts/check.sh` with the local test database running. Never point tests at a shared or production database.
+To check a change, stop the frontend development server and run `scripts/check.sh`. For the PostgreSQL checks too, set `TEST_DATABASE_URL=postgresql+asyncpg://cpfc:cpfc@localhost:<port>/cpfc` to your local database (the port `scripts/dev/postgres-up.sh` reports). Never point tests at a shared or production database.
+
+Port already in use, a pull request from a fork, or a deploy to watch? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## How it works
 
