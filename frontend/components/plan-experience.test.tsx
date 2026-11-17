@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { Snapshot } from "../lib/api";
 import { PlanExperience } from "./plan-experience";
 
@@ -40,14 +40,14 @@ describe("trip plan", () => {
     const trip = kind === "journey" ? partialTrip : { ...partialTrip, journey: null, stay: hotel };
     state.snapshot = { ...snapshot, phase: "researching", itinerary: null, preview_trip: trip };
     render(<PlanExperience />);
-    const providerName = kind === "journey" ? /View on Google Flights/ : /View on travel provider/;
+    const providerName = kind === "journey" ? /View on Google Flights/ : /View on Booking.com/;
     expect((await screen.findAllByRole("link", { name: providerName }))[0]).toBeVisible();
     state.snapshot = { ...state.snapshot, state_revision: 2, phase: "failed", finalization_reason: "planning_failed" };
     window.dispatchEvent(new Event("online"));
     expect(await screen.findByRole("article", { name: "Partial trip results" })).toBeVisible();
     expect(screen.getAllByRole("link", { name: providerName })[0]).toBeVisible();
     expect(screen.getByText(kind === "journey" ? /We couldn’t verify accommodation/ : /We couldn’t verify a return journey/)).toBeVisible();
-    expect(screen.queryByText(/Finding your stay and comparing options/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Finding your stay" })).not.toBeInTheDocument();
     expect(screen.queryByText("Take the plan with you.")).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent(/email/i);
   });
@@ -57,7 +57,7 @@ describe("trip plan", () => {
     render(<PlanExperience />);
     expect(await screen.findByRole("article", { name: "Partial trip results" })).toBeVisible();
     expect(screen.getByText("Incomplete trip")).toBeVisible();
-    expect(screen.getAllByRole("link", { name: kind === "journey" ? /View on Google Flights/ : /View on travel provider/ })[0]).toBeVisible();
+    expect(screen.getAllByRole("link", { name: kind === "journey" ? /View on Google Flights/ : /View on Booking.com/ })[0]).toBeVisible();
     expect(screen.getByRole("link", { name: /Try another trip brief/ })).toHaveAttribute("href", "/");
   });
 
@@ -100,18 +100,29 @@ describe("trip plan", () => {
     state.snapshot = { ...snapshot, phase: "researching", itinerary: null, preview_trip: { fixture: { city: "Lyon", opponent: "Olympique Lyonnais", kickoff_at: "2026-10-15T19:00:00Z", timezone: "Europe/Paris", venue: "Parc Olympique Lyonnais", venue_status: "confirmed" }, journey: { outbound: [outbound], inbound: [inbound] }, stay: null } as unknown as NonNullable<Snapshot["preview_trip"]> };
     render(<PlanExperience />);
     expect(await screen.findByRole("article", { name: "Journey found while planning continues" })).toBeVisible();
-    expect(screen.getByText(/This is not a complete trip yet/)).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Palace at Olympique Lyonnais" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Olympique Lyonnais v Palace" })).toBeVisible();
     const match = screen.getByRole("heading", { name: "Olympique Lyonnais v Crystal Palace" });
-    const checking = screen.getByRole("heading", { name: "Finding your stay and comparing options" });
+    const checking = screen.getByRole("heading", { name: "Finding your stay" });
     const returning = screen.getByRole("heading", { name: /Lyon.*Manchester/ });
     expect(match).toBeVisible();
-    expect(screen.getByRole("link", { name: /CPFC members: buy away match tickets/ })).toHaveAttribute("href", "https://www.eticketing.co.uk/cpfc/Events?preFilter=9&preFilterName=3.+Away+Matches+%2526+Coach+Travel&utm_source=website&utm_medium=referral&utm_campaign=WebStoryTickets021026");
+    expect(screen.getByRole("link", { name: /Buy away tickets/ })).toHaveAttribute("href", "https://www.eticketing.co.uk/cpfc/Events?preFilter=9&preFilterName=3.+Away+Matches+%2526+Coach+Travel&utm_source=website&utm_medium=referral&utm_campaign=WebStoryTickets021026");
     expect(checking).toBeVisible();
     expect(returning).toBeVisible();
-    expect(match.compareDocumentPosition(checking) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(checking.compareDocumentPosition(returning) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(checking.compareDocumentPosition(match) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(match.compareDocumentPosition(returning) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByText(/Comparing routes from/)).not.toBeInTheDocument();
     expect(screen.queryByText("Take the plan with you.")).not.toBeInTheDocument();
+  });
+
+  it("goes from the in-progress preview straight to the itinerary without replaying the waiting card", async () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }));
+    state.snapshot = { ...snapshot, phase: "researching", itinerary: null, preview_trip: partialTrip };
+    render(<PlanExperience />);
+    expect(await screen.findByRole("article", { name: "Journey found while planning continues" })).toBeVisible();
+    await act(() => new Promise(resolve => setTimeout(resolve, 450)));
+    state.snapshot = { ...snapshot, state_revision: 2 };
+    window.dispatchEvent(new Event("online"));
+    await waitFor(() => expect(screen.queryByRole("article", { name: "Journey found while planning continues" })).not.toBeInTheDocument());
+    expect(screen.queryByText("Your route is ready.")).not.toBeInTheDocument();
   });
 });

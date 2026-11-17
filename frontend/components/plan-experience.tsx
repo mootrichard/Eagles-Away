@@ -6,6 +6,7 @@ import { ApiError, Snapshot, newer, request, terminal } from "../lib/api";
 import { ItineraryView, JourneyPreview } from "./itinerary-view";
 import { PlanningProgress } from "./planning-progress";
 import { trackAnalytics } from "../lib/analytics";
+import { Icon } from "./icons";
 
 export function PlanExperience() {
   const params = useSearchParams();
@@ -19,7 +20,7 @@ export function PlanExperience() {
   });
   const [showHero, setShowHero] = useState(false);
   const [completing, setCompleting] = useState(false);
-  const heroShown = useRef(false);
+  const waitingView = useRef<"hero" | "preview" | null>(null);
   const hadItinerary = useRef(false);
   const hasItinerary = !!snapshot?.itinerary;
   const outcomeTracked = useRef(false);
@@ -56,12 +57,15 @@ export function PlanExperience() {
   }, [session]);
   // Anti-flash gate: never show the elaborate stepper for instant/recorded results.
   useEffect(() => { const t = setTimeout(() => setShowHero(true), 400); return () => clearTimeout(t); }, []);
+  // Remember which waiting view was last on screen, so the reveal never steps back to the hero card.
   useEffect(() => {
-    if (showHero && snapshot && !snapshot.itinerary && !terminal(snapshot)) heroShown.current = true;
+    if (!snapshot || snapshot.itinerary || terminal(snapshot)) return;
+    if (snapshot.preview_trip) waitingView.current = "preview";
+    else if (showHero) waitingView.current = "hero";
   }, [showHero, snapshot]);
-  // Brief all-green "done" beat before revealing the first itinerary, only if the hero was shown.
+  // Brief all-green "done" beat before revealing the first itinerary, only straight after the hero card.
   useEffect(() => {
-    if (hasItinerary && !hadItinerary.current && heroShown.current) {
+    if (hasItinerary && !hadItinerary.current && waitingView.current === "hero") {
       setCompleting(true);
       const t = setTimeout(() => setCompleting(false), 450);
       hadItinerary.current = hasItinerary;
@@ -74,18 +78,23 @@ export function PlanExperience() {
     if (snapshot.itinerary) { trackAnalytics("plan_ready"); outcomeTracked.current = true; }
     else if (snapshot.phase === "failed") { trackAnalytics("plan_failed"); outcomeTracked.current = true; }
   }, [snapshot]);
-  if (!session) return <div className="plan panel"><h1>No session selected</h1><Link href="/">Start a trip brief <span className="arrow">→</span></Link></div>;
+  if (!session) return <div className="plan card plain"><h1>No session selected</h1><Link className="text-link" href="/">Start a trip brief<Icon name="arrowRight" size={16} /></Link></div>;
   const origin = snapshot?.origin_city ?? "your city";
-  return <div className="plan">{snapshot?.development_mode && <div className="notice">Development preview · Synthetic trips and prices</div>}<div className="plan-heading"><div><p className="eyebrow">YOUR AWAY DAYS</p><h1>A plan worth<br />travelling for.</h1></div><span className="tag">From {origin}</span></div>
+  return <div className="plan">
+    {snapshot?.development_mode && <div className="notice">Development preview · Synthetic trips and prices</div>}
+    <div className="plan-heading">
+      <h1>Your away day</h1>
+      <span className="tag"><Icon name="pin" size={14} />From {origin}</span>
+    </div>
     <div className={terminal(snapshot) ? "status" : "status sr-only"} role="status" aria-live="polite">{snapshot?.phase === "failed" ? "We couldn’t complete this trip request." : snapshot?.progress_message ?? "Connecting to your planning session…"}</div>
-    {error && <p className="error" role="alert">{error}</p>}
+    {error && <p className="error" role="alert"><Icon name="alert" />{error}</p>}
     {!snapshot?.itinerary && !snapshot?.preview_trip && !terminal(snapshot) && (showHero
       ? <PlanningProgress snapshot={snapshot} city={city} origin={origin} variant="hero" />
       : <div className="plan-connecting" aria-hidden="true"><span className="plan-connecting-mark" />Preparing your route…</div>)}
     {snapshot?.preview_trip && !snapshot.itinerary && <JourneyPreview trip={snapshot.preview_trip} ended={terminal(snapshot)}>{!terminal(snapshot) && <PlanningProgress snapshot={snapshot} city={snapshot.preview_trip.fixture.city} origin={origin} variant="preview" />}</JourneyPreview>}
     {completing && <PlanningProgress snapshot={snapshot} city={city} origin={origin} variant="hero" forceDone />}
-    {terminal(snapshot) && !snapshot?.itinerary && <p className="notice">{snapshot?.preview_trip ? "Your partial results are saved here. A complete itinerary could not be verified. " : "No itinerary was saved for this request. "}<Link href="/">Try another trip brief <span className="arrow">→</span></Link></p>}
+    {terminal(snapshot) && !snapshot?.itinerary && <p className="end-note">{snapshot?.preview_trip ? "Partial results saved." : "No itinerary was saved for this request."}<Link className="text-link" href="/">Try another trip brief<Icon name="arrowRight" size={16} /></Link></p>}
     {snapshot?.itinerary && !completing && <div className="plan-reveal"><ItineraryView itinerary={snapshot.itinerary} /></div>}
-    {snapshot?.itinerary && terminal(snapshot) && <p className="fine">This planning session has ended. <Link href="/">Start a new trip brief <span className="arrow">→</span></Link></p>}
+    {snapshot?.itinerary && terminal(snapshot) && <p className="end-note">This planning session has ended.<Link className="text-link" href="/">Start a new trip brief<Icon name="arrowRight" size={16} /></Link></p>}
   </div>;
 }

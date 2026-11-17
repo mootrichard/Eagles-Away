@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import type { Snapshot } from "../lib/api";
 import { type Stage, stageFor, tickerLines } from "../lib/planning";
+import { Icon } from "./icons";
 
 function useReducedMotion(): boolean {
   const [reduced, setReduced] = useState(false);
@@ -37,33 +38,29 @@ export function PlanningProgress({ snapshot, city, origin = "London", variant = 
 }) {
   const reduced = useReducedMotion();
   const stage: Stage = forceDone ? "done" : stageFor(snapshot, { ignoreItinerary: variant === "preview" });
-  const lines = variant === "preview" ? [
-    city ? `Checking places to stay in ${city}…` : "Checking places to stay…",
-    "Comparing available rooms and prices…",
-    "Looking for better journey options…",
-  ] : tickerLines(stage, city, origin);
+  const preview = snapshot?.preview_trip;
+  const lines = variant === "hero" ? tickerLines(stage, city, origin)
+    : !preview?.stay ? [city ? `Checking places to stay in ${city}…` : "Checking places to stay…", "Comparing rooms and prices…"]
+    : !preview.journey ? ["Checking return travel…", "Comparing journey times…"]
+    : ["Comparing prices and journey times…", "Checking local transfers…", "Shortlisting your options…"];
   const index = useTicker((stage === "preferences" || stage === "searching") && !reduced, lines.length);
-  const rotatingText = lines[index];
+  const rotatingText = lines[index % lines.length];
 
   if (variant === "preview") {
     return <p className="ticker inline" aria-hidden="true"><span key={reduced ? "static" : index} className={reduced ? undefined : "tfade"}>{rotatingText}</span></p>;
   }
 
   const destination = city ?? "the away end";
-  const routeMessage = stage === "done" ? "Your route is ready."
-    : stage === "searching" ? "We’re weighing travel and stays against your preferences."
-    : "We’re turning your trip brief into an away day.";
+  const stages = ["Brief", "Search", "Ready"] as const;
+  const reached = stage === "done" ? 2 : stage === "searching" ? 1 : 0;
 
-  return <div className="plan-progress panel" aria-hidden="true">
-    <p className="ticker hero"><span key={reduced ? "static" : `${stage}-${index}`} className={reduced ? undefined : "tfade"}>{rotatingText}</span></p>
-    <div className={`journey-card ${stage}`}>
-      <div className="journey-card-heading"><span className="card-label">YOUR AWAY DAY</span><span className="journey-card-badge">{stage === "done" ? "READY" : "IN THE MAKING"}</span></div>
-      <div className="journey-route">
-        <div className="journey-city"><span className="journey-pin" /><small>STARTING FROM</small><strong>{origin}</strong></div>
-        <div className="journey-arc"><svg viewBox="0 0 320 90" preserveAspectRatio="none" focusable="false"><path d="M 10 72 Q 160 -35 310 72" /></svg><span className="journey-plane">✈</span></div>
-        <div className="journey-city destination"><span className="journey-pin" /><small>HEADING TO</small><strong>{destination}</strong></div>
-      </div>
-      <p className="journey-note">{routeMessage}</p>
+  return <div className={`plan-progress card ${stage}`} aria-hidden="true">
+    <div className="journey-route">
+      <div className="journey-city"><small>From</small><strong>{origin}</strong></div>
+      <div className="journey-arc"><svg viewBox="0 0 320 90" preserveAspectRatio="none" focusable="false"><path d="M 10 72 Q 160 -35 310 72" /></svg><span className="journey-plane"><Icon name="plane" size={22} /></span></div>
+      <div className="journey-city destination"><small>To</small><strong>{destination}</strong></div>
     </div>
+    <p className="ticker hero"><span key={reduced ? "static" : `${stage}-${index}`} className={reduced ? undefined : "tfade"}>{rotatingText}</span></p>
+    <ol className="stages">{stages.map((name, i) => <li key={name} className={i < reached || stage === "done" ? "done" : i === reached ? "active" : ""}>{i < reached || stage === "done" ? <Icon name="check" size={12} /> : <span className="dot" />}{name}</li>)}</ol>
   </div>;
 }
