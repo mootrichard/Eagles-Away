@@ -26,7 +26,12 @@ with workflow.unsafe.imports_passed_through():
         Trip,
     )
     from cpfc_trip.planner.agent import MODEL_SETTINGS, Intent, planner
-    from cpfc_trip.planner.planning import choose, enumerate_specs, feasible_journey, feasible_stay
+    from cpfc_trip.planner.planning import (
+        choose,
+        enumerate_specs,
+        feasible_journey,
+        grow_preview,
+    )
     from cpfc_trip.planner.providers.searchapi import (
         REQUEST_CAPS,
         SEARCH_ACTIVITY_ATTEMPTS,
@@ -242,48 +247,29 @@ class TravelPlanningSessionWorkflow(PydanticAIWorkflow):
 
             def show_partial_trip() -> None:
                 nonlocal first_journey_at
-                if not initial or (
-                    self.state.preview_trip is not None and self.state.preview_trip.journey
-                ):
+                if not initial:
                     return
-                for fixture in self.data.fixtures:
-                    for batch in batches[fixture.id]:
-                        for journey in batch.journeys:
-                            route = next(
-                                (item for item in self.data.routes if item.id == journey.route_id),
-                                None,
-                            )
-                            if route and feasible_journey(
-                                journey, fixture, effective, intent, route
-                            ):
-                                first_journey_at = workflow.now()
-                                self.change(
-                                    preview_trip=Trip(
-                                        fixture=fixture,
-                                        journey=journey,
-                                        summary="A dated return journey was found. We’re still checking accommodation and other options.",
-                                        gaps=(
-                                            "Accommodation and local transfers are still being checked.",
-                                        ),
-                                    ),
-                                    progress_message="A journey was found. Checking stays and alternatives…",
-                                )
-                                return
-                if self.state.preview_trip is None:
-                    for fixture in self.data.fixtures:
-                        for batch in batches[fixture.id]:
-                            for stay in batch.stays:
-                                if feasible_stay(stay, fixture, effective, intent):
-                                    self.change(
-                                        preview_trip=Trip(
-                                            fixture=fixture,
-                                            stay=stay,
-                                            summary="A dated stay was found. We’re still checking return travel.",
-                                            gaps=("Return travel is still being checked.",),
-                                        ),
-                                        progress_message="A stay was found. Checking return travel…",
-                                    )
-                                    return
+                preview, journey_found = grow_preview(
+                    self.state.preview_trip,
+                    self.data.fixtures,
+                    batches,
+                    self.data.routes,
+                    effective,
+                    intent,
+                )
+                if journey_found and first_journey_at is None:
+                    first_journey_at = workflow.now()
+                if preview is not None and preview is not self.state.preview_trip:
+                    self.change(
+                        preview_trip=preview,
+                        progress_message=(
+                            "A journey and stay were found. Comparing options…"
+                            if preview.journey and preview.stay
+                            else "A journey was found. Checking stays and alternatives…"
+                            if preview.journey
+                            else "A stay was found. Checking return travel…"
+                        ),
+                    )
 
             async def acquire_job(
                 key: str, kind: str, spec: SearchSpec, cap: int
