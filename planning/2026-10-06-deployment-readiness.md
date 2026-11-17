@@ -193,3 +193,19 @@ schema validation passed. Configuration deployment `9543f88e-807c-40da-893f-c107
 reached `ACTIVE`, with the Resend secret slot present. Hosted `/` and `/healthz` returned 200
 and `/privacy/` displayed the new policy. No actual email was sent to verify the key's
 delivery permission; no paid live route search was run.
+
+## 17 November 2026 — browser-only release verified
+
+Deployment `f8898c62-dfe5-42b8-8a1e-d6f7e7077a11` reached `ACTIVE` (16/16 steps).
+The predeploy job applied the removal migration. The immutable worker branch is
+`codex/worker-release-6ad51d8`, build ID `6ad51d890d087fadb11032c101e722b377ccc5fe`,
+and Temporal reports it as Current. There are two `planner-main` instances. Retired email
+settings are absent from the app spec. The owner's direct-cutover authorization superseded
+the initial proposal to stage this schema change.
+
+The current CLI's enhanced queue filter did not return the Worker Deployment's pollers;
+`temporal task-queue describe --legacy-mode` showed both instance identities on both queue
+types. Check those identities against DigitalOcean rather than inferring worker loss solely
+from an empty enhanced-filter result. A recorded-data V4 smoke workflow completed on the
+hosted queue without provider Activities. Public health/readiness, schema and desktop/mobile
+review/privacy checks passed; no paid-provider end-to-end search was run.
