@@ -1,27 +1,16 @@
-from datetime import UTC, datetime, timedelta
-from html import unescape
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr, ValidationError
-from sqlalchemy import select
 from temporalio.client import WorkflowQueryFailedError
-from temporalio.exceptions import ApplicationError
-from temporalio.testing import ActivityEnvironment
 
 from cpfc_trip.api import create_app
 from cpfc_trip.catalog import load_catalog
 from cpfc_trip.config import Settings
-from cpfc_trip.domain import Brief, CreateSession, Itinerary, SessionInput, Snapshot
-from cpfc_trip.emailing import render
-from cpfc_trip.persistence.models import DeliveryRow, SessionRow
+from cpfc_trip.domain import Brief, CreateSession, SessionInput
 from cpfc_trip.persistence.repository import Repository
-from cpfc_trip.planner.agent import Intent
-from cpfc_trip.planner.planning import choose, enumerate_specs
-from cpfc_trip.planner.recorded import sample
-from cpfc_trip.temporal.activities import DeliveryActivities
 
 
 def test_preview_requires_access_credentials() -> None:
@@ -41,63 +30,10 @@ def test_public_preview_does_not_require_access_credentials() -> None:
     assert settings.preview_access_required is False
 
 
-def frozen(data):
-    spec = enumerate_specs(data.brief, data.fixtures, data.routes, True)[0]
-    trip = choose(
-        data.fixtures[0],
-        [sample(spec, "flight"), sample(spec, "stay")],
-        data.brief,
-        data.routes,
-        Intent(action="revise", answer=""),
-    )
-    return Snapshot(
-        public_session_id=data.public_session_id,
-        interaction_deadline=datetime.now(UTC),
-        phase="finalizing",
-        email_status="pending",
-        itinerary=Itinerary(revision=1, generated_at=datetime.now(UTC), trips=(trip,)),
-    )
-
-
-async def test_submission_and_email_idempotency(repository, session_input, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    request = CreateSession(
-        submission_id=uuid4(), email="supporter@example.com", brief=session_input.brief
-    )
-    data = await repository.create(request, "x" * 64)
-    again = await repository.create(request, "x" * 64)
-    assert data == again
-    with pytest.raises(PermissionError):
-        await repository.create(request, "y" * 64)
-    assert await repository.authorize(data.public_session_id, "x" * 64)
-    assert not await repository.authorize(data.public_session_id, "y" * 64)
-    async with repository.sessions() as db:
-        row = await db.get(SessionRow, str(data.public_session_id))
-        assert b"supporter@example.com" not in row.encrypted_email
-        assert "supporter@example.com" not in str(row.workflow_input)
-    snapshot = frozen(data)
-    deliver = DeliveryActivities(repository).deliver_itinerary
-    env = ActivityEnvironment()
-    first = await env.run(deliver, snapshot)
-    assert await env.run(deliver, snapshot) == first
-    async with repository.sessions() as db:
-        rows = (await db.scalars(select(DeliveryRow))).all()
-        assert len(rows) == 1 and rows[0].attempts == 1
-    changed = snapshot.model_copy(
-        update={
-            "itinerary": snapshot.itinerary.model_copy(
-                update={"caveats": ("Different frozen content",)}
-            )
-        }
-    )
-    with pytest.raises(ApplicationError, match="mismatch"):
-        await env.run(deliver, changed)
-
-
 async def test_session_uses_selected_departure_airports(repository, session_input):
     brief = session_input.brief.model_copy(update={"origin_city": "Manchester"})
     data = await repository.create(
-        CreateSession(submission_id=uuid4(), email="supporter@example.com", brief=brief),
+        CreateSession(submission_id=uuid4(), brief=brief),
         "x" * 64,
     )
     assert data.brief.origin_city == "Manchester"
@@ -132,7 +68,7 @@ async def test_live_session_rejects_removed_departure_city(repository) -> None:
     brief = Brief(fixture_ids=("uel-2026-besiktas-away",), origin_city="Bournemouth")
     with pytest.raises(ValueError, match="not currently supported for live planning"):
         await repository.create(
-            CreateSession(submission_id=uuid4(), email="supporter@example.com", brief=brief),
+            CreateSession(submission_id=uuid4(), brief=brief),
             "x" * 64,
         )
 
@@ -142,22 +78,20 @@ async def test_unsupported_train_city_and_city_fail_before_search(repository, se
         update={"origin_city": "Manchester", "transport_mode": "rail"}
     )
     rail = await repository.create(
-        CreateSession(submission_id=uuid4(), email="supporter@example.com", brief=brief),
+        CreateSession(submission_id=uuid4(), brief=brief),
         "x" * 64,
     )
     assert any(route.mode == "rail" for route in rail.routes)
     unsupported_rail = brief.model_copy(update={"origin_city": "Belfast"})
     with pytest.raises(ValueError, match="Train search is not available"):
         await repository.create(
-            CreateSession(
-                submission_id=uuid4(), email="supporter@example.com", brief=unsupported_rail
-            ),
+            CreateSession(submission_id=uuid4(), brief=unsupported_rail),
             "x" * 64,
         )
     unsupported = brief.model_copy(update={"origin_city": "Paris", "transport_mode": "flight"})
     with pytest.raises(ValueError, match="supported UK departure city"):
         await repository.create(
-            CreateSession(submission_id=uuid4(), email="supporter@example.com", brief=unsupported),
+            CreateSession(submission_id=uuid4(), brief=unsupported),
             "x" * 64,
         )
 
@@ -171,94 +105,9 @@ async def test_train_mode_requires_a_route_for_the_selected_match(
     brief = Brief(fixture_ids=(fixture.id,), origin_city=city, transport_mode="rail")
     with pytest.raises(ValueError, match="Train search is not available"):
         await repository.create(
-            CreateSession(submission_id=uuid4(), email="supporter@example.com", brief=brief),
+            CreateSession(submission_id=uuid4(), brief=brief),
             "x" * 64,
         )
-
-
-async def test_ambiguous_email_expires_without_resend(repository, session_input):
-    request = CreateSession(
-        submission_id=uuid4(), email="supporter@example.com", brief=session_input.brief
-    )
-    data = await repository.create(request, "x" * 64)
-    snapshot = frozen(data)
-    import json
-
-    from cpfc_trip.persistence.repository import digest
-
-    payload = render(snapshot)
-    async with repository.sessions() as db, db.begin():
-        db.add(
-            DeliveryRow(
-                session_id=str(data.public_session_id),
-                payload_hash=digest(json.dumps(payload, sort_keys=True)),
-                payload=payload,
-                created_at=datetime.now(UTC) - timedelta(hours=24),
-                status="pending",
-                attempts=1,
-            )
-        )
-    with pytest.raises(ApplicationError, match="reconciliation"):
-        await ActivityEnvironment().run(DeliveryActivities(repository).deliver_itinerary, snapshot)
-
-
-def test_email_escapes_and_has_no_script_links(session_input):
-    snapshot = frozen(session_input)
-    trip = snapshot.itinerary.trips[0].model_copy(
-        update={"summary": '<script>alert("bad")</script>'}
-    )
-    snapshot = snapshot.model_copy(
-        update={"itinerary": snapshot.itinerary.model_copy(update={"trips": (trip,)})}
-    )
-    payload = render(snapshot)
-    assert "<script>" not in payload["html"] and "&lt;script&gt;" in payload["html"]
-    assert "Prices may have changed" in payload["text"]
-
-
-def test_email_matches_plan_card_structure(session_input: SessionInput) -> None:
-    """The email should carry the website's visual hierarchy and practical trip details."""
-    payload = render(frozen(session_input))
-    html = payload["html"]
-    assert 'role="presentation"' in html
-    assert "EAGLES <span" in html and "AWAY" in html
-    assert "A plan worth travelling for." in html
-    assert "MATCHDAY" in html
-    assert "OUTBOUND" in html and "RETURN" in html
-    assert "STAY" in html and "Before you book" in html
-    assert "#ee2e24" in html and "#0055a5" in html
-    assert "#bf1934" not in html and "#20509a" not in html
-    assert "Known subtotal" in html
-    assert "Price source:" in html
-    ticket_url = (
-        "https://www.eticketing.co.uk/cpfc/Events?preFilter=9&"
-        "preFilterName=3.+Away+Matches+%2526+Coach+Travel&"
-        "utm_source=website&utm_medium=referral&"
-        "utm_campaign=WebStoryTickets021026"
-    )
-    assert ticket_url in unescape(html)
-    assert ticket_url in payload["text"]
-    assert "CPFC members: buy away match tickets" in unescape(html)
-
-
-def test_email_shows_saved_caveats_once(session_input: SessionInput) -> None:
-    """The email should use the itinerary's caveats without adding a second version."""
-    snapshot = frozen(session_input)
-    assert snapshot.itinerary is not None
-    payload = render(snapshot)
-    for body in (payload["text"], unescape(payload["html"])):
-        for caveat in snapshot.itinerary.caveats:
-            assert body.count(caveat) == 1
-        assert body.count("Prices may have changed") == 1
-        assert "No match tickets, bookings, or travel" not in body
-
-
-def test_failure_email_keeps_branded_summary(session_input: SessionInput) -> None:
-    """A failed search should still send a readable branded email."""
-    snapshot = frozen(session_input).model_copy(update={"itinerary": None})
-    payload = render(snapshot)
-    assert "A plan worth travelling for." in payload["html"]
-    assert "We couldn't verify a useful itinerary" in unescape(payload["html"])
-    assert "No travel has been booked" in payload["text"]
 
 
 async def test_api_auth_polling_204_and_csrf(
@@ -269,6 +118,7 @@ async def test_api_auth_polling_204_and_csrf(
     temporal = AsyncMock()
     handle = Mock()
     handle.query = AsyncMock(return_value=None)
+    handle.describe = AsyncMock()
     temporal.get_workflow_handle = Mock(return_value=handle)
     app = create_app(settings, repository, temporal)
     sid = session_input.public_session_id
@@ -284,7 +134,7 @@ async def test_api_auth_polling_204_and_csrf(
         assert response.status_code == 204 and response.headers["cache-control"] == "no-store"
         assert (
             await client.post(
-                f"/api/sessions/{sid}/finalize",
+                f"/api/sessions/{sid}/close",
                 json={"id": str(uuid4())},
                 headers={"Origin": "https://evil.example"},
             )
@@ -343,7 +193,6 @@ async def test_preview_serves_export_and_uses_secure_session_cookie(
             "/api/sessions",
             json={
                 "submission_id": str(uuid4()),
-                "email": "supporter@example.com",
                 "brief": session_input.brief.model_dump(mode="json"),
             },
             headers={"Origin": "https://preview.example", "X-Submission-Token": "x" * 64},

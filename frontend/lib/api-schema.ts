@@ -72,7 +72,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/sessions/{public_id}/finalize": {
+    "/api/sessions/{public_id}/close": {
         parameters: {
             query?: never;
             header?: never;
@@ -81,25 +81,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Finalize */
-        post: operations["finalize_api_sessions__public_id__finalize_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/webhooks/resend": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Webhook */
-        post: operations["webhook_webhooks_resend_post"];
+        /** Close */
+        post: operations["close_api_sessions__public_id__close_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -255,11 +238,6 @@ export interface components {
              * Format: uuid
              */
             submission_id: string;
-            /**
-             * Email
-             * Format: email
-             */
-            email: string;
             brief: components["schemas"]["Brief"];
         };
         /** Evidence */
@@ -546,7 +524,7 @@ export interface components {
              * @default created
              * @enum {string}
              */
-            phase: "created" | "researching" | "draft_ready" | "revising" | "finalizing" | "emailed" | "closed" | "failed" | "email_failed";
+            phase: "created" | "researching" | "draft_ready" | "revising" | "finalizing" | "closed" | "failed";
             /**
              * Progress Message
              * @default Checking routes from London…
@@ -575,16 +553,6 @@ export interface components {
             follow_ups_remaining: number;
             /** Finalization Reason */
             finalization_reason?: ("manual" | "inactivity" | "limit" | "planning_failed") | null;
-            /** Email Kind */
-            email_kind?: ("itinerary" | "failure_notice") | null;
-            /**
-             * Email Status
-             * @default not_requested
-             * @enum {string}
-             */
-            email_status: "not_requested" | "pending" | "sent" | "failed";
-            /** Email Provider Id */
-            email_provider_id?: string | null;
         };
         /** Stay */
         Stay: {
@@ -852,7 +820,7 @@ export interface operations {
             };
         };
     };
-    finalize_api_sessions__public_id__finalize_post: {
+    close_api_sessions__public_id__close_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -883,26 +851,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    webhook_webhooks_resend_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
         };

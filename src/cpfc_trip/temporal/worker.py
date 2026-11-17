@@ -8,10 +8,9 @@ from temporalio.worker import Worker, WorkerDeploymentConfig
 
 from cpfc_trip.config import Settings
 from cpfc_trip.persistence.database import engine
-from cpfc_trip.persistence.repository import Repository
 from cpfc_trip.persistence.search_cache import SearchCache
 from cpfc_trip.planner.agent import configure_model, model
-from cpfc_trip.temporal.activities import DeliveryActivities, SearchActivities
+from cpfc_trip.temporal.activities import SearchActivities
 from cpfc_trip.temporal.client import connect
 from cpfc_trip.temporal.workflow import TravelPlanningSessionWorkflow
 
@@ -23,7 +22,6 @@ async def run() -> None:
     db = engine(settings)
     try:
         client = await connect(settings)
-        delivery = DeliveryActivities(Repository(db, settings))
         search = SearchActivities(SearchCache(db))
         deployment = (
             WorkerDeploymentConfig(
@@ -48,7 +46,6 @@ async def run() -> None:
                 search.search_flights,
                 search.search_trains,
                 search.search_stays,
-                delivery.deliver_itinerary,
             ],
             deployment_config=deployment,
             max_concurrent_activities=8,

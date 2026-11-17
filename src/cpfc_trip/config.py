@@ -14,8 +14,6 @@ class Settings(BaseSettings):
     preview_username: str = ""
     preview_password: SecretStr = SecretStr("")
     database_url: str = "postgresql+asyncpg://cpfc:cpfc@localhost:5432/cpfc"
-    contact_encryption_key: SecretStr = SecretStr("")
-    session_secret: SecretStr = SecretStr("")
     temporal_address: str = "localhost:7233"
     temporal_namespace: str = "default"
     temporal_task_queue: str = "cpfc-trip-v3"
@@ -23,7 +21,6 @@ class Settings(BaseSettings):
     temporal_tls: bool = False
     worker_build_id: str = ""
     planner_mode: Literal["live", "recorded"] = "live"
-    email_mode: Literal["preview", "resend"] = "preview"
     searchapi_api_key: SecretStr = SecretStr("")
     searchapi_enabled: bool = True
     google_cloud_project: str = ""
@@ -32,9 +29,6 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr = SecretStr("")
     google_gcloud_configuration: str = ""
     google_gcloud_account: str = ""
-    resend_api_key: SecretStr = SecretStr("")
-    resend_from_email: str = ""
-    resend_webhook_secret: SecretStr = SecretStr("")
     cloud_sql_instance: str = ""
     database_user: str = ""
     database_name: str = "cpfc"
@@ -54,8 +48,8 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Production requires a Google Cloud project and ADC runtime identity"
                 )
-            if self.planner_mode != "live" or self.email_mode != "resend":
-                raise ValueError("Production requires live planning and Resend")
+            if self.planner_mode != "live":
+                raise ValueError("Production requires live planning")
             if not self.temporal_tls or not self.worker_build_id:
                 raise ValueError("Production requires Temporal TLS and an immutable build ID")
         return self

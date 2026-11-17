@@ -2,7 +2,29 @@
 
 This is a dated discovery record for the first cloud deployment. It supplements the [approved MVP architecture](mvp-plan.md#infrastructure-and-deployment) and the [engineering handoff](2026-09-30-engineering-handoff.md). No production resources or DNS records were changed during the initial review; later updates are recorded below.
 
-## 15 October 2026 — current operator notes
+## 17 November 2026 — browser-only release
+
+The owner removed email collection and delivery and reported completing the PostgreSQL patch
+upgrade. The app already uses SQLAlchemy `pool_pre_ping=True` to replace dead idle connections;
+this does not replay an interrupted transaction. A local PostgreSQL test terminates a pooled
+backend and verifies the next query reconnects successfully.
+
+New workflows use `TravelPlanningSessionWorkflowV4`. Completed V3 snapshots remain readable:
+the API falls back to the stored Temporal result if the old pinned worker is unavailable,
+discards retired delivery metadata, and maps old delivery terminal phases to `closed`.
+Keep the hosted queue and Worker Deployment name below. Use a new immutable source SHA/build ID
+and promote it after its Workflow and Activity pollers register.
+
+Migration `20261117_0004` removes the delivery/webhook tables and recipient columns, preserving
+session IDs, access hashes and saved itinerary data. Removed recipient data cannot be recovered
+by downgrading. Old application binaries are incompatible with this schema; rollback requires
+a pre-migration backup or a compatible application fix. The owner explicitly approved a direct
+cutover because nobody is using the site; verify no running trip workflows before replacement.
+The `cpfc-db upgrade` predeploy job applies the migration. Remove the retired `EMAIL_MODE`,
+`RESEND_*`, `CONTACT_ENCRYPTION_KEY` and `SESSION_SECRET` environment entries from the app spec.
+No email provider or recipient-encryption configuration is required by the new API or worker.
+
+## 15 October 2026 — historical operator notes
 
 These notes supersede the private-preview and GCP deployment steps below. The public site is
 `https://eaglesaway.com/`. DigitalOcean App Platform app

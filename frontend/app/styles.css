@@ -161,9 +161,6 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-
 .notice ul { margin-bottom: 0; padding-left: 21px; }
 .trip details { margin-top: 18px; }
 .trip details section { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
-.send-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin: var(--space-4) 0 var(--space-3); padding: var(--panel-padding); border-left: 5px solid var(--red); border-radius: 8px; background: var(--ink); color: #fff; }
-.send-bar small { max-width: 420px; margin-top: 4px; color: #e4e4e4; }
-.send-bar .primary { flex-shrink: 0; }
 
 /* The waiting illustration is decorative; the visually hidden status is the live region. */
 @keyframes form-step-enter { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
@@ -227,8 +224,6 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-
   .plan { padding: var(--space-3) var(--page-gutter) var(--space-5); }
   .plan.panel { margin-top: var(--space-3); }
   .plan-heading .tag { display: none; }
-  .send-bar { flex-direction: column; align-items: stretch; }
-  .send-bar .primary { width: 100%; }
   .journey-route { grid-template-columns: minmax(72px, auto) minmax(40px, 1fr) minmax(72px, auto); gap: 6px; }
   .journey-city small { font-size: 10px; letter-spacing: 0; }
   .journey-arc { height: 70px; }

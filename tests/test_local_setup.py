@@ -4,7 +4,6 @@ import importlib.util
 from pathlib import Path
 
 import pytest
-from cryptography.fernet import Fernet
 
 
 @pytest.fixture
@@ -37,18 +36,18 @@ def test_new_checkout_is_ready_and_idempotent(setup_module, local_root: Path) ->
         for line in before.splitlines()
         if "=" in line and not line.startswith("#")
     )
-    Fernet(values["CONTACT_ENCRYPTION_KEY"].encode())
-    assert len(values["SESSION_SECRET"]) >= 48
+    assert "CONTACT_ENCRYPTION_KEY" not in values
+    assert "SESSION_SECRET" not in values
     assert values["TEMPORAL_TASK_QUEUE"] == "cpfc-trip-v3"
     assert values["PLANNER_MODE"] == "recorded"
-    assert values["EMAIL_MODE"] == "preview"
+    assert "EMAIL_MODE" not in values
     assert (local_root / ".env").stat().st_mode & 0o777 == 0o600
     setup_module.configure_local(local_root)
     assert (local_root / ".env").read_text() == before
 
 
 def test_preserves_custom_secrets_cloud_and_frontend(setup_module, local_root: Path) -> None:  # type: ignore[no-untyped-def]
-    original = "SEARCHAPI_API_KEY=private-key\nCONTACT_ENCRYPTION_KEY=keep-key\nSESSION_SECRET=keep-secret\nTEMPORAL_TASK_QUEUE=team-queue\nGOOGLE_CLOUD_LOCATION=custom-region\nPLANNER_MODE=live\n"
+    original = "SEARCHAPI_API_KEY=private-key\nTEMPORAL_TASK_QUEUE=team-queue\nGOOGLE_CLOUD_LOCATION=custom-region\nPLANNER_MODE=live\n"
     (local_root / ".env").write_text(original)
     (local_root / "frontend/.env.local").write_text("NEXT_PUBLIC_API_ORIGIN=https://team.example\n")
     setup_module.configure_local(local_root)
@@ -68,4 +67,4 @@ def test_migrates_only_obsolete_defaults(setup_module, local_root: Path) -> None
     updated = (local_root / ".env").read_text()
     assert "TEMPORAL_TASK_QUEUE=cpfc-trip-v3\n" in updated
     assert "PLANNER_MODE=recorded\n" in updated
-    assert "EMAIL_MODE=preview\n" in updated
+    assert "EMAIL_MODE=" not in updated

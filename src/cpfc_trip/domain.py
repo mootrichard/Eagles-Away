@@ -6,7 +6,7 @@ from datetime import date
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 
 class Record(BaseModel):
@@ -61,7 +61,6 @@ class Brief(Record):
 
 class CreateSession(Record):
     submission_id: UUID
-    email: EmailStr
     brief: Brief
 
 
@@ -130,13 +129,20 @@ class Limits(Record):
 
 class SessionInput(Record):
     public_session_id: UUID
-    contact_id: UUID
     brief: Brief
     fixtures: tuple[Fixture, ...]
     routes: tuple[Route, ...]
     limits: Limits = Limits()
     planner_mode: Literal["live", "recorded"] = "live"
     catalog_version: str = "2026-10-05.away.1"
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_contact(cls, value: object) -> object:
+        """Read stored session inputs created before recipient collection was removed."""
+        if isinstance(value, dict):
+            return {key: item for key, item in value.items() if key != "contact_id"}
+        return value
 
 
 class Money(Record):
@@ -285,10 +291,8 @@ Phase = Literal[
     "draft_ready",
     "revising",
     "finalizing",
-    "emailed",
     "closed",
     "failed",
-    "email_failed",
 ]
 
 
@@ -300,8 +304,7 @@ class Snapshot(Record):
     phase: Phase = "created"
     progress_message: str = "Checking routes from London…"
     itinerary: Itinerary | None = None
-    # A checked return journey may be shown while accommodation is still being searched.
-    # It is never the saved or emailed itinerary.
+    # A checked journey or stay can be shown before a complete trip is verified.
     preview_trip: Trip | None = None
     transcript_tail: tuple[ChatTurn, ...] = ()
     active_turn_id: UUID | None = None
@@ -309,9 +312,23 @@ class Snapshot(Record):
     interaction_deadline: AwareDatetime
     follow_ups_remaining: int = 10
     finalization_reason: Literal["manual", "inactivity", "limit", "planning_failed"] | None = None
-    email_kind: Literal["itinerary", "failure_notice"] | None = None
-    email_status: Literal["not_requested", "pending", "sent", "failed"] = "not_requested"
-    email_provider_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def read_legacy_result(cls, value: object) -> object:
+        """Keep completed plans readable after retiring their delivery metadata."""
+        if not isinstance(value, dict):
+            return value
+        result = {
+            key: item
+            for key, item in value.items()
+            if key not in {"email_kind", "email_status", "email_provider_id"}
+        }
+        if result.get("phase") in {"emailed", "email_failed"}:
+            result["phase"] = "closed"
+        if "email_status" in value and result.get("phase") == "closed":
+            result["progress_message"] = "This planning session has ended."
+        return result
 
 
 class SearchSpec(Record):

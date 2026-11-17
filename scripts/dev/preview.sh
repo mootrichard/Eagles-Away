@@ -6,7 +6,6 @@ cd "${repo_root}"
 mkdir -p .data
 export DATABASE_URL="sqlite+aiosqlite:///.data/browser-preview.db"
 export PLANNER_MODE=recorded
-export EMAIL_MODE=preview
 case "${1:-}" in
   migrate) exec uv run --locked cpfc-db upgrade ;;
   api) exec uv run --locked cpfc-api ;;

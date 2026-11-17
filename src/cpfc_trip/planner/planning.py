@@ -69,6 +69,25 @@ def enumerate_specs(
     ]
 
 
+def feasible_stay(stay: Stay, fixture: Fixture, brief: Brief, intent: Intent) -> bool:
+    """Check a standalone stay covers match night and the requested room constraints."""
+    match_day = fixture.kickoff_at.astimezone(ZoneInfo(fixture.timezone)).date()
+    window = next(window for window in brief.windows if window.fixture_id == fixture.id)
+    return (
+        window.earliest_departure.date()
+        <= stay.check_in
+        <= match_day
+        < stay.check_out
+        <= window.latest_return.date()
+        and (not intent.private_room or stay.room_type == "private")
+        and (not intent.private_bathroom or stay.bathroom == "private")
+        and (
+            stay.max_guests is None
+            or stay.max_guests * brief.travellers.rooms >= brief.travellers.size
+        )
+    )
+
+
 def feasible(
     journey: Journey,
     stay: Stay,

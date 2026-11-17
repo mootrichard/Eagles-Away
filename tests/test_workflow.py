@@ -25,7 +25,7 @@ async def ready(handle):
         state = await handle.query(Workflow.get_snapshot)
         if state.phase == "draft_ready":
             return state
-        if state.phase in {"failed", "email_failed"}:
+        if state.phase in {"failed"}:
             pytest.fail(str(state))
         await asyncio.sleep(0.05)
     pytest.fail("Draft did not become ready")
@@ -66,8 +66,8 @@ async def test_manual_dedup_query_replay_and_restart(environment, session_input)
         assert recovered.itinerary == second.itinerary
         await handle.execute_update(Workflow.request_finalize, Command(id=uuid4()))
         result = await handle.result()
-    assert result.phase == "emailed" and len(emails) == 1
-    assert emails[0].itinerary == first.itinerary
+    assert result.phase == "closed" and emails == []
+    assert result.itinerary == first.itinerary
     history = await handle.fetch_history()
     await Replayer(workflows=[Workflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
     assert len(result.model_dump_json().encode()) < 100_000
@@ -93,7 +93,6 @@ async def test_session_limit_closes_without_email(environment, session_input):
     assert result.finalization_reason == "limit"
     assert result.phase == "closed"
     assert result.itinerary is not None
-    assert result.email_status == "not_requested"
     assert emails == []
 
 
@@ -116,9 +115,6 @@ async def test_no_draft_finishes_without_email(environment, session_input):
         result = await handle.result()
     assert result.phase == "failed"
     assert result.itinerary is None
-    assert result.email_kind is None
-    assert result.email_status == "not_requested"
-    assert result.email_provider_id is None
     assert emails == []
     history = await handle.fetch_history()
     await Replayer(workflows=[Workflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
@@ -185,7 +181,7 @@ async def test_no_nonstop_flights_explains_failed_city_search(
             "windows": (),
         }
     )
-    brief = validate_brief(brief, (fixture,), datetime.now(UTC))
+    brief = validate_brief(brief, (fixture,), datetime(2026, 9, 6, tzinfo=UTC))
     routes = routes_for_origin(
         tuple(route for route in catalog_routes if route.fixture_id == fixture_id), origin
     )
@@ -203,8 +199,7 @@ async def test_no_nonstop_flights_explains_failed_city_search(
             Workflow.run, value, id=str(uuid4()), task_queue=queue
         )
         result = await handle.result()
-    assert result.phase == "failed" and result.email_kind is None
-    assert result.email_status == "not_requested" and emails == []
+    assert result.phase == "failed"
     if mixed_failure:
         assert "No nonstop or suitable one-stop flights" not in result.transcript_tail[-1].content
         assert "couldn't find a complete trip" in result.transcript_tail[-1].content
@@ -316,6 +311,8 @@ async def test_airport_preference_uses_verified_fallback_only_when_needed(
         ("no_stay", "couldn't verify a stay"),
         ("late_return", "match timing and connection checks"),
         ("no_route", "no dated return journey was verified"),
+        ("hotel_error", "couldn't verify a stay"),
+        ("flight_error", "no dated return journey was verified"),
     ],
 )
 async def test_no_complete_trip_explains_evidence_gap(environment, session_input, reason, expected):
@@ -326,6 +323,10 @@ async def test_no_complete_trip_explains_evidence_gap(environment, session_input
 
     @activity.defn(name="search_flights")
     async def flights(spec: SearchSpec) -> SearchBatch:
+        if reason == "flight_error":
+            from temporalio.exceptions import ApplicationError
+
+            raise ApplicationError("Travel provider unavailable", non_retryable=True)
         if reason == "no_route":
             return SearchBatch(gaps=("Complete outbound and return flights were not available.",))
         batch = sample(spec, "flight")
@@ -342,6 +343,10 @@ async def test_no_complete_trip_explains_evidence_gap(environment, session_input
 
     @activity.defn(name="search_stays")
     async def stays(spec: SearchSpec) -> SearchBatch:
+        if reason == "hotel_error":
+            from temporalio.exceptions import ApplicationError
+
+            raise ApplicationError("Hotel provider unavailable", non_retryable=True)
         return SearchBatch() if reason == "no_stay" else sample(spec, "stay")
 
     @activity.defn(name="deliver_itinerary")
@@ -373,8 +378,17 @@ async def test_no_complete_trip_explains_evidence_gap(environment, session_input
             pytest.fail("Search did not finish")
         assert state.phase == "failed", state
         result = await handle.result()
-    assert result.phase == "failed" and result.email_status == "not_requested"
+    assert result.phase == "failed"
     assert expected in result.transcript_tail[-1].content
+    if reason in {"no_stay", "hotel_error"}:
+        assert result.preview_trip and result.preview_trip.journey
+        assert result.preview_trip.stay is None
+    elif reason in {"no_route", "flight_error"}:
+        assert result.preview_trip and result.preview_trip.stay
+        assert result.preview_trip.journey is None
+    await Replayer(workflows=[Workflow], plugins=[PydanticAIPlugin()]).replay_workflow(
+        await handle.fetch_history()
+    )
 
 
 async def test_durable_pydantic_model_and_query_during_activity(
@@ -751,8 +765,9 @@ async def test_slow_comparison_keeps_first_complete_wave(environment, session_in
         await handle.result()
 
 
-async def test_first_journey_is_visible_while_hotel_search_continues(
-    environment, session_input, monkeypatch
+@pytest.mark.parametrize("first_kind", ["flight", "stay"])
+async def test_partial_result_is_visible_while_other_search_continues(
+    environment, session_input, monkeypatch, first_kind
 ):
     from cpfc_trip.domain import SearchBatch, SearchSpec
     from cpfc_trip.planner.agent import model
@@ -762,17 +777,21 @@ async def test_first_journey_is_visible_while_hotel_search_continues(
         raise AssertionError("Structured form inputs should not need Gemini")
 
     monkeypatch.setattr(model.client.aio.models, "generate_content", fake_model)
-    hotel_started = asyncio.Event()
-    release_hotel = asyncio.Event()
+    search_started = asyncio.Event()
+    release_search = asyncio.Event()
 
     @activity.defn(name="search_flights")
     async def flights(spec: SearchSpec) -> SearchBatch:
+        if first_kind == "stay":
+            search_started.set()
+            await release_search.wait()
         return sample(spec, "flight")
 
     @activity.defn(name="search_stays")
     async def stays(spec: SearchSpec) -> SearchBatch:
-        hotel_started.set()
-        await release_hotel.wait()
+        if first_kind == "flight":
+            search_started.set()
+            await release_search.wait()
         return sample(spec, "stay")
 
     @activity.defn(name="deliver_itinerary")
@@ -795,7 +814,7 @@ async def test_first_journey_is_visible_while_hotel_search_continues(
         handle = await environment.client.start_workflow(
             Workflow.run, value, id=str(uuid4()), task_queue=queue
         )
-        await asyncio.wait_for(hotel_started.wait(), timeout=5)
+        await asyncio.wait_for(search_started.wait(), timeout=5)
         for _ in range(50):
             state = await handle.query(Workflow.get_snapshot)
             if state.preview_trip:
@@ -804,9 +823,9 @@ async def test_first_journey_is_visible_while_hotel_search_continues(
         assert state.phase == "researching"
         assert state.itinerary is None
         assert state.preview_trip is not None
-        assert state.preview_trip.journey is not None
-        assert state.preview_trip.stay is None
-        release_hotel.set()
+        assert (state.preview_trip.journey is not None) == (first_kind == "flight")
+        assert (state.preview_trip.stay is not None) == (first_kind == "stay")
+        release_search.set()
         completed = await ready(handle)
         assert completed.itinerary and completed.itinerary.trips[0].stay
         assert completed.preview_trip is None

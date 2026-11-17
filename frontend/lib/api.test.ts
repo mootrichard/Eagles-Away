@@ -11,7 +11,7 @@ describe("poll reconciliation", () => {
   it("stops only at terminal states", () => {
     expect(terminal(current)).toBe(false);
     expect(terminal({ ...current, phase: "finalizing" })).toBe(false);
-    expect(terminal({ ...current, phase: "emailed" })).toBe(true);
+    expect(terminal({ ...current, phase: "closed" })).toBe(true);
   });
   it("does not invent fractional precision for rounded prices", () => {
     expect(formatMoney({ minor_units: 5800, currency: "GBP" })).toBe("£58");

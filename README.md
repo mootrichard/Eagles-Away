@@ -8,9 +8,9 @@ Plan a Crystal Palace away day from a UK city. Eagles Away looks for travel and 
 
 1. Choose your starting city, match, dates and travel preferences.
 2. See the journeys and stays we could verify, with prices where available.
-3. Check what is still missing, then open the provider links to confirm details before booking. You can email yourself a completed plan if you choose.
+3. Review the results in your browser, check what is still missing, then open the provider links to confirm details before booking. No account or contact details are needed.
 
-Eagles Away does not make bookings or sell match tickets. Prices and availability can change, and some costs, such as local transfers or match tickets, may be missing. If we cannot verify a complete trip, the page explains what was missing and does not send an email.
+Eagles Away does not make bookings or sell match tickets. Prices and availability can change, and some costs, such as local transfers or match tickets, may be missing. If we cannot verify a complete trip, any verified journey or stay remains visible, marked as an incomplete trip. The page explains what was missing.
 
 ## Run it locally
 
@@ -32,7 +32,7 @@ scripts/dev/worker.sh
 scripts/dev/frontend.sh
 ```
 
-Open [localhost:3000](http://localhost:3000). A fresh checkout uses recorded sample trips and preview emails, so you can explore the app without paid travel searches or sending mail. Email previews are saved in `.data/email-previews/`.
+Open [localhost:3000](http://localhost:3000). A fresh checkout uses recorded sample trips, so you can explore the app without paid travel searches.
 
 To check a change, stop the frontend development server and run `scripts/check.sh`. For the PostgreSQL checks too, use `TEST_DATABASE_URL=postgresql+asyncpg://cpfc:cpfc@localhost:5432/cpfc scripts/check.sh` with the local test database running. Never point tests at a shared or production database.
 

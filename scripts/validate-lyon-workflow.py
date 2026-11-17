@@ -1,4 +1,4 @@
-"""Paid live Lyon validation: bounded SearchApi/Gemini calls; preview email only."""
+"""Paid live Lyon validation: bounded SearchApi/Gemini calls."""
 
 import argparse
 import asyncio
@@ -19,13 +19,9 @@ from cpfc_trip.config import Settings
 from cpfc_trip.domain import Brief, Command, CreateSession, MessageCommand
 from cpfc_trip.persistence.database import engine
 from cpfc_trip.persistence.repository import Repository
+from cpfc_trip.persistence.search_cache import SearchCache
 from cpfc_trip.planner.agent import configure_model, model
-from cpfc_trip.temporal.activities import (
-    DeliveryActivities,
-    search_flights,
-    search_stays,
-    search_trains,
-)
+from cpfc_trip.temporal.activities import SearchActivities
 from cpfc_trip.temporal.workflow import TravelPlanningSessionWorkflow as Workflow
 
 
@@ -35,13 +31,13 @@ async def ready(handle, previous=None):  # type: ignore[no-untyped-def]
             state = await handle.query(Workflow.get_snapshot)
             if state.phase == "draft_ready" and state.last_committed_turn_id != previous:
                 return state
-            if state.phase in {"failed", "email_failed", "emailed"}:
+            if state.phase in {"failed", "closed"}:
                 raise RuntimeError(f"Unexpected phase: {state.phase}")
             await asyncio.sleep(1)
 
 
 async def main() -> None:
-    settings = Settings(planner_mode="live", email_mode="preview")
+    settings = Settings(planner_mode="live")
     await configure_model(settings)
     db = engine(settings)
     repo = Repository(db, settings)
@@ -49,13 +45,12 @@ async def main() -> None:
     data = await repo.create(
         CreateSession(
             submission_id=uuid4(),
-            email="lyon-validation@example.com",
             brief=Brief(fixture_ids=(fixture.id,)),
         ),
         str(uuid4()),
     )
-    delivery = DeliveryActivities(repo)
-    activities = [search_flights, search_stays, search_trains, delivery.deliver_itinerary]
+    search = SearchActivities(SearchCache(db))
+    activities = [search.search_flights, search.search_stays, search.search_trains]
     queue = str(uuid4())
     states, timings = [], {}
     folder = Path(".data/lyon-live-workflow")
@@ -114,9 +109,7 @@ async def main() -> None:
                 )
                 await handle.execute_update(Workflow.request_finalize, Command(id=uuid4()))
                 final = await handle.result()
-                assert final.phase == "emailed"
-                receipt = await delivery.deliver_itinerary(final)
-                assert receipt.startswith("preview-")
+                assert final.phase == "closed"
             history = await handle.fetch_history()
             (folder / "history.json").write_text(history.to_json())
             await Replayer(workflows=[Workflow], plugins=[PydanticAIPlugin()]).replay_workflow(
@@ -126,18 +119,16 @@ async def main() -> None:
                 json.dumps(
                     {
                         "real_travel": True,
-                        "real_email_sent": False,
                         "snapshots": [s.model_dump(mode="json") for s in states],
                         "final": final.model_dump(mode="json"),
                         "timings": timings,
                         "restart": "passed",
                         "replay": "passed",
-                        "preview_receipt": receipt,
                     },
                     indent=2,
                 )
             )
-            print("Live draft, Q&A, restart, rail revision, idempotent preview and replay passed.")
+            print("Live draft, Q&A, restart, rail revision, closure and replay passed.")
     finally:
         await db.dispose()
         await model.client.aio.aclose()
@@ -149,7 +140,7 @@ async def replay_only() -> None:
         await asyncio.to_thread(Path(".data/lyon-live-workflow/history.json").read_text),
     )
     await Replayer(workflows=[Workflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
-    print("Saved live Lyon history replay passed; no model, search or email requests.")
+    print("Saved live Lyon history replay passed; no model or search requests.")
 
 
 if __name__ == "__main__":

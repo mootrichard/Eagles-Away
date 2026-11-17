@@ -1,8 +1,8 @@
 from datetime import UTC, datetime
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
-from cryptography.fernet import Fernet
 
 from cpfc_trip.catalog import load_catalog, validate_brief
 from cpfc_trip.config import Settings
@@ -18,9 +18,6 @@ def settings():
         _env_file=None,
         app_env="test",
         planner_mode="recorded",
-        email_mode="preview",
-        contact_encryption_key=Fernet.generate_key().decode(),
-        session_secret="test-secret",
         database_url="sqlite+aiosqlite:///:memory:",
     )
 
@@ -34,7 +31,6 @@ def session_input():
     sid = uuid4()
     return SessionInput(
         public_session_id=sid,
-        contact_id=sid,
         brief=brief,
         fixtures=(fixtures[0],),
         routes=tuple(r for r in routes if r.fixture_id == fixtures[0].id),
@@ -49,3 +45,11 @@ async def repository(settings):
         await connection.run_sync(Base.metadata.create_all)
     yield Repository(db, settings)
     await db.dispose()
+
+
+@pytest.fixture(autouse=True)
+def repository_fixture_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Validate the fixed test catalog at its reference date, independent of today's date."""
+    clock = Mock(wraps=datetime)
+    clock.now.return_value = datetime(2026, 9, 6, tzinfo=UTC)
+    monkeypatch.setattr("cpfc_trip.persistence.repository.datetime", clock)

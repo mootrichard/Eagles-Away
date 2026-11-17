@@ -54,19 +54,15 @@ def main() -> None:
     parser.add_argument(
         "--check-live",
         action="store_true",
-        help="Refresh credentials and read quota; no paid searches or email",
+        help="Refresh credentials and read quota; no paid searches",
     )
     args = parser.parse_args()
     settings = Settings()
     for name, value in [
         ("SearchApi", settings.searchapi_api_key.get_secret_value()),
-        ("Resend", settings.resend_api_key.get_secret_value()),
-        ("Resend webhook", settings.resend_webhook_secret.get_secret_value()),
-        ("Contact encryption", settings.contact_encryption_key.get_secret_value()),
-        ("Session secret", settings.session_secret.get_secret_value()),
     ]:
         print(f"{name}: {'configured' if value else 'missing'}")
-    print(f"Planning mode: {settings.planner_mode}; email mode: {settings.email_mode}")
+    print(f"Planning mode: {settings.planner_mode}")
     print(
         f"Gemini project: {settings.google_cloud_project or 'missing'}; location: {settings.google_cloud_location}"
     )

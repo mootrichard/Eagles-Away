@@ -2,18 +2,15 @@
 
 import asyncio
 import os
-from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete, select, text
-from temporalio.testing import ActivityEnvironment
+from sqlalchemy import delete, text
 
-from cpfc_trip.domain import CreateSession, Itinerary, Snapshot, Trip
+from cpfc_trip.domain import CreateSession
 from cpfc_trip.persistence.database import engine
-from cpfc_trip.persistence.models import DeliveryRow, SessionRow
+from cpfc_trip.persistence.models import SessionRow
 from cpfc_trip.persistence.repository import Repository
-from cpfc_trip.temporal.activities import DeliveryActivities
 
 
 @pytest.fixture
@@ -32,14 +29,11 @@ async def pg(settings):
 
 async def cleanup(repo, sid):
     async with repo.sessions() as db, db.begin():
-        await db.execute(delete(DeliveryRow).where(DeliveryRow.session_id == str(sid)))
         await db.execute(delete(SessionRow).where(SessionRow.id == str(sid)))
 
 
 async def test_postgres_concurrent_submission_returns_one_session(pg, session_input):
-    request = CreateSession(
-        submission_id=uuid4(), email="postgres-check@example.com", brief=session_input.brief
-    )
+    request = CreateSession(submission_id=uuid4(), brief=session_input.brief)
     results = await asyncio.gather(*(pg.create(request, "x" * 64) for _ in range(8)))
     sid = results[0].public_session_id
     try:
@@ -51,35 +45,18 @@ async def test_postgres_concurrent_submission_returns_one_session(pg, session_in
         await cleanup(pg, sid)
 
 
-async def test_postgres_concurrent_delivery_is_serialized(pg, session_input, tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    data = await pg.create(
-        CreateSession(
-            submission_id=uuid4(), email="postgres-check@example.com", brief=session_input.brief
-        ),
-        "x" * 64,
-    )
-    now = datetime.now(UTC)
-    snapshot = Snapshot(
-        public_session_id=data.public_session_id,
-        interaction_deadline=now,
-        phase="finalizing",
-        itinerary=Itinerary(
-            revision=1,
-            generated_at=now,
-            trips=(Trip(fixture=data.fixtures[0], summary="Database integration check"),),
-        ),
-    )
+async def test_postgres_reconnects_after_idle_connection_is_dropped(pg) -> None:
+    """A server-closed idle connection is replaced before the next query."""
+    async with pg.sessions() as session:
+        backend_pid = await session.scalar(text("SELECT pg_backend_pid()"))
+    killer = engine(pg.settings)
     try:
-        deliver = DeliveryActivities(pg).deliver_itinerary
-        outputs = await asyncio.gather(
-            *(ActivityEnvironment().run(deliver, snapshot) for _ in range(4))
-        )
-        assert len(set(outputs)) == 1
-        async with pg.sessions() as db:
-            row = await db.scalar(
-                select(DeliveryRow).where(DeliveryRow.session_id == str(data.public_session_id))
+        async with killer.connect() as connection:
+            assert await connection.scalar(
+                text("SELECT pg_terminate_backend(:pid)"), {"pid": backend_pid}
             )
-            assert row.attempts == 1 and row.status == "submitted"
+        async with pg.sessions() as session:
+            assert await session.scalar(text("SELECT 1")) == 1
+            assert await session.scalar(text("SELECT pg_backend_pid()")) != backend_pid
     finally:
-        await cleanup(pg, data.public_session_id)
+        await killer.dispose()

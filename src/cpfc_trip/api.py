@@ -7,7 +7,7 @@ import secrets
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Annotated, Any, cast
 from uuid import UUID
 
@@ -17,11 +17,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
-from sqlalchemy import select, text
-from sqlalchemy.exc import IntegrityError
-from svix.webhooks import Webhook, WebhookVerificationError
-from temporalio.client import Client, WorkflowQueryFailedError, WorkflowUpdateFailedError
+from sqlalchemy import text
+from temporalio.client import (
+    Client,
+    WorkflowExecutionStatus,
+    WorkflowQueryFailedError,
+    WorkflowUpdateFailedError,
+)
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError
@@ -31,23 +33,9 @@ from cpfc_trip.config import Settings
 from cpfc_trip.domain import Command, CreateSession, MessageCommand, Receipt, Snapshot
 from cpfc_trip.origins import LIVE_ORIGINS, UK_RAIL
 from cpfc_trip.persistence.database import engine
-from cpfc_trip.persistence.models import DeliveryRow, WebhookRow
 from cpfc_trip.persistence.repository import Repository
 from cpfc_trip.temporal.client import connect
 from cpfc_trip.temporal.workflow import TravelPlanningSessionWorkflow
-
-
-class EmailEventData(BaseModel):
-    email_id: str = Field(min_length=1, max_length=100)
-    tags: dict[str, str] = Field(default_factory=dict)
-
-
-class EmailEvent(BaseModel):
-    type: str = Field(min_length=1, max_length=64)
-    data: EmailEventData
-
-
-DELIVERY_STATUS_ORDER = {"email.delivered": 1, "email.bounced": 2, "email.complained": 3}
 
 
 class LocalLimiter:
@@ -151,7 +139,7 @@ def create_app(
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, exc: RequestValidationError) -> Response:
-        # FastAPI's default errors include input values, potentially echoing an email/token.
+        # FastAPI's default errors include input values, potentially echoing private values or tokens.
         return JSONResponse(
             {"detail": [{"loc": x["loc"], "msg": x["msg"]} for x in exc.errors()]}, status_code=422
         )
@@ -241,7 +229,18 @@ def create_app(
                 rpc_timeout=timedelta(seconds=5),
             )
         except (RPCError, WorkflowQueryFailedError):
-            raise HTTPException(503, "Reconnecting to your saved planning session") from None
+            # Completed V3 results remain readable after their pinned workers retire.
+            try:
+                description = await handle.describe(rpc_timeout=timedelta(seconds=5))
+                if description.status != WorkflowExecutionStatus.COMPLETED:
+                    raise HTTPException(503, "Reconnecting to your saved planning session")
+                value = Snapshot.model_validate(
+                    await handle.result(rpc_timeout=timedelta(seconds=5))
+                )
+                if value.state_revision == after_revision:
+                    value = None
+            except (RPCError, WorkflowQueryFailedError):
+                raise HTTPException(503, "Reconnecting to your saved planning session") from None
         return value if value else Response(status_code=204)
 
     async def update(
@@ -271,59 +270,9 @@ def create_app(
     async def message(public_id: UUID, body: MessageCommand, request: Request) -> Receipt:
         return await update(request, public_id, body, False)
 
-    @app.post("/api/sessions/{public_id}/finalize", response_model=Receipt, status_code=202)
-    async def finalize(public_id: UUID, body: Command, request: Request) -> Receipt:
+    @app.post("/api/sessions/{public_id}/close", response_model=Receipt, status_code=202)
+    async def close(public_id: UUID, body: Command, request: Request) -> Receipt:
         return await update(request, public_id, body, True)
-
-    @app.post("/webhooks/resend")
-    async def webhook(request: Request) -> Response:
-        key = config.resend_webhook_secret.get_secret_value()
-        if not key:
-            raise HTTPException(503, "Webhook is not configured")
-        raw = await request.body()
-        if len(raw) > 32000:
-            raise HTTPException(413)
-        try:
-            Webhook(key).verify(raw.decode(), dict(request.headers))
-            event = EmailEvent.model_validate_json(raw)
-        except (WebhookVerificationError, ValueError):
-            raise HTTPException(400, "Invalid signature") from None
-        event_id = request.headers["svix-id"]
-        if len(event_id) > 128:
-            raise HTTPException(400, "Invalid event ID")
-        if event.type not in DELIVERY_STATUS_ORDER:
-            return Response(status_code=200)
-        async with repo(request).sessions() as db, db.begin():
-            if await db.get(WebhookRow, event_id):
-                return Response(status_code=200)
-            # A signed session tag also reconciles an accepted send whose HTTP receipt was lost.
-            # Locking serializes this with the send transaction, even before provider_id is saved.
-            sid = event.data.tags.get("session_id")
-            delivery = await db.scalar(
-                select(DeliveryRow)
-                .where(
-                    DeliveryRow.session_id == sid
-                    if sid
-                    else DeliveryRow.provider_id == event.data.email_id
-                )
-                .with_for_update()
-            )
-            if delivery:
-                if delivery.provider_id and delivery.provider_id != event.data.email_id:
-                    raise HTTPException(409, "Email receipt does not match the saved delivery")
-                delivery.provider_id = event.data.email_id
-                if DELIVERY_STATUS_ORDER[event.type] > DELIVERY_STATUS_ORDER.get(
-                    delivery.status, 0
-                ):
-                    delivery.status = event.type
-                db.add(
-                    WebhookRow(id=event_id, received_at=datetime.now(UTC), event_type=event.type)
-                )
-            try:
-                await db.flush()
-            except IntegrityError:
-                await db.rollback()
-        return Response(status_code=200)
 
     @app.get("/healthz")
     async def health() -> dict[str, bool]:

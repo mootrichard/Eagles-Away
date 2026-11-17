@@ -4,7 +4,6 @@ import json
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from cryptography.fernet import Fernet
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
@@ -24,7 +23,6 @@ class Repository:
     def __init__(self, engine: AsyncEngine, settings: Settings):
         self.sessions = async_sessionmaker(engine, expire_on_commit=False)
         self.settings = settings
-        self.cipher = Fernet(settings.contact_encryption_key.get_secret_value().encode())
 
     async def create(self, request: CreateSession, token: str) -> SessionInput:
         fingerprint = digest(request.model_dump_json())
@@ -66,7 +64,6 @@ class Repository:
             sid = uuid4()
             data = SessionInput(
                 public_session_id=sid,
-                contact_id=sid,
                 brief=brief,
                 fixtures=tuple(f for f in fixtures if f.id in brief.fixture_ids),
                 routes=tuple(r for r in routes if r.fixture_id in brief.fixture_ids),
@@ -76,19 +73,12 @@ class Repository:
                 planner_mode=self.settings.planner_mode,
                 limits=Limits(),
             )
-            email = str(request.email)
             db.add(
                 SessionRow(
                     id=str(sid),
                     submission_id=str(request.submission_id),
                     request_hash=fingerprint,
                     access_hash=digest(token),
-                    email_hash=hmac.new(
-                        self.settings.session_secret.get_secret_value().encode(),
-                        email.casefold().encode(),
-                        "sha256",
-                    ).hexdigest(),
-                    encrypted_email=self.cipher.encrypt(email.encode()),
                     created_at=datetime.now(UTC),
                     workflow_input=json.loads(data.model_dump_json()),
                 )

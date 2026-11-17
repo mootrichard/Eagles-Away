@@ -22,46 +22,75 @@ const snapshot: Snapshot = {
   transcript_tail: [{ id: "reply", turn_id: "turn", role: "assistant", content: "Your plan is ready.", created_at: "2026-10-05T12:00:00Z" }],
   interaction_deadline: "2026-10-05T13:00:00Z",
   follow_ups_remaining: 10,
-  email_status: "not_requested",
 };
+
+const leg = { id: "flight", kind: "transport", mode: "flight", origin: "LTN", destination: "SZG", departs_at: "2027-01-28T08:00:00Z", arrives_at: "2027-01-28T10:55:00+01:00", operator: "easyJet", service_number: "U2 2639", quote: null, offer: { booking_url: "https://www.google.com/travel/flights", evidence: { underlying_source: "Google Flights", provider: "SearchApi" } }, caveats: [] };
+const partialTrip = {
+  fixture: { id: "salzburg", city: "Salzburg", opponent: "FC Red Bull Salzburg", kickoff_at: "2027-01-28T20:00:00Z", timezone: "Europe/Vienna", venue: "Red Bull Arena", venue_status: "provisional" },
+  journey: { outbound: [leg], inbound: [{ ...leg, id: "return", origin: "SZG", destination: "LTN" }] },
+  stay: null,
+} as unknown as NonNullable<Snapshot["preview_trip"]>;
+const hotel = { property_name: "Salzburg Hotel", check_in: "2027-01-28", check_out: "2027-01-29", room_description: "Single room", bathroom: "private", offer: { booking_url: "https://www.booking.com/hotel/at/example.html", evidence: { underlying_source: "Booking.com", provider: "SearchApi" } }, quote: null, caveats: [] } as unknown as NonNullable<typeof partialTrip.stay>;
 
 describe("trip plan", () => {
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); state.snapshot = null; });
 
+  it.each(["journey", "stay"] as const)("keeps the %s visible when the other search fails", async kind => {
+    vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }));
+    const trip = kind === "journey" ? partialTrip : { ...partialTrip, journey: null, stay: hotel };
+    state.snapshot = { ...snapshot, phase: "researching", itinerary: null, preview_trip: trip };
+    render(<PlanExperience />);
+    const providerName = kind === "journey" ? /View on Google Flights/ : /View on travel provider/;
+    expect((await screen.findAllByRole("link", { name: providerName }))[0]).toBeVisible();
+    state.snapshot = { ...state.snapshot, state_revision: 2, phase: "failed", finalization_reason: "planning_failed" };
+    window.dispatchEvent(new Event("online"));
+    expect(await screen.findByRole("article", { name: "Partial trip results" })).toBeVisible();
+    expect(screen.getAllByRole("link", { name: providerName })[0]).toBeVisible();
+    expect(screen.getByText(kind === "journey" ? /We couldn’t verify accommodation/ : /We couldn’t verify a return journey/)).toBeVisible();
+    expect(screen.queryByText(/Finding your stay and comparing options/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Take the plan with you.")).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/email/i);
+  });
+
+  it.each(["journey", "stay"] as const)("restores saved %s results when a failed session is reopened", async kind => {
+    state.snapshot = { ...snapshot, phase: "failed", itinerary: null, preview_trip: kind === "journey" ? partialTrip : { ...partialTrip, journey: null, stay: hotel } };
+    render(<PlanExperience />);
+    expect(await screen.findByRole("article", { name: "Partial trip results" })).toBeVisible();
+    expect(screen.getByText("Incomplete trip")).toBeVisible();
+    expect(screen.getAllByRole("link", { name: kind === "journey" ? /View on Google Flights/ : /View on travel provider/ })[0]).toBeVisible();
+    expect(screen.getByRole("link", { name: /Try another trip brief/ })).toHaveAttribute("href", "/");
+  });
+
   it("shows the saved plan without the follow-up panel", async () => {
     state.snapshot = snapshot;
     render(<PlanExperience />);
-    expect(await screen.findByText("Take the plan with you.")).toBeVisible();
+    expect(await screen.findByText("Your draft is ready.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Send me/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Your conversation" })).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Ask a question or change your trip" })).not.toBeInTheDocument();
   });
 
   it("offers a new brief after the session ends without a conversation panel", async () => {
-    state.snapshot = { ...snapshot, phase: "emailed", progress_message: "Your email has been prepared." };
+    state.snapshot = { ...snapshot, phase: "closed", progress_message: "This planning session has ended." };
     render(<PlanExperience />);
     expect(await screen.findByRole("link", { name: /Start a new trip brief/ })).toHaveAttribute("href", "/");
     expect(screen.queryByRole("region", { name: "Your conversation" })).not.toBeInTheDocument();
   });
 
-  it("keeps an expired plan visible and says no email was sent", async () => {
+  it("keeps an expired plan visible without delivery controls", async () => {
     state.snapshot = { ...snapshot, phase: "closed", finalization_reason: "limit" };
     render(<PlanExperience />);
-    expect(await screen.findByText(/No email was sent/)).toBeVisible();
+    expect(await screen.findByRole("link", { name: /Start a new trip brief|Try another trip brief/ })).toBeVisible();
+    expect(document.body).not.toHaveTextContent(/email/i);
     expect(screen.queryByText("Take the plan with you.")).not.toBeInTheDocument();
   });
 
-  it("explains that an unsuccessful search sends no email", async () => {
-    state.snapshot = { ...snapshot, phase: "failed", itinerary: null, email_status: "not_requested" };
+  it("explains an unsuccessful search without delivery copy", async () => {
+    state.snapshot = { ...snapshot, phase: "failed", itinerary: null };
     render(<PlanExperience />);
-    expect(await screen.findByText(/No email was sent/)).toBeVisible();
+    expect(await screen.findByRole("link", { name: /Start a new trip brief|Try another trip brief/ })).toBeVisible();
+    expect(document.body).not.toHaveTextContent(/email/i);
     expect(screen.queryByText("Take the plan with you.")).not.toBeInTheDocument();
-  });
-
-  it("does not claim older failure-notice sessions sent no email", async () => {
-    state.snapshot = { ...snapshot, phase: "failed", itinerary: null, email_kind: "failure_notice", email_status: "sent" };
-    render(<PlanExperience />);
-    expect(await screen.findByText(/No itinerary was saved/)).toBeVisible();
-    expect(screen.queryByText(/No email was sent/)).not.toBeInTheDocument();
   });
 
   it("shows a checked journey as an incomplete preview while hotels are pending", async () => {

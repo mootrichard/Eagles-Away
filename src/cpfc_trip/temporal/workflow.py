@@ -26,7 +26,7 @@ with workflow.unsafe.imports_passed_through():
         Trip,
     )
     from cpfc_trip.planner.agent import MODEL_SETTINGS, Intent, planner
-    from cpfc_trip.planner.planning import choose, enumerate_specs, feasible_journey
+    from cpfc_trip.planner.planning import choose, enumerate_specs, feasible_journey, feasible_stay
     from cpfc_trip.planner.providers.searchapi import (
         REQUEST_CAPS,
         SEARCH_ACTIVITY_ATTEMPTS,
@@ -47,7 +47,7 @@ class NoCompleteTrip(Exception):
     """A specific, safe explanation for a search with no verifiable travel."""
 
 
-@workflow.defn(name="TravelPlanningSessionWorkflowV3")
+@workflow.defn(name="TravelPlanningSessionWorkflowV4")
 class TravelPlanningSessionWorkflow(PydanticAIWorkflow):
     __pydantic_ai_agents__ = [planner]
 
@@ -86,7 +86,7 @@ class TravelPlanningSessionWorkflow(PydanticAIWorkflow):
     def closed(self) -> bool:
         return (
             self.finalize_requested
-            or self.state.phase in {"finalizing", "emailed", "closed", "failed", "email_failed"}
+            or self.state.phase in {"finalizing", "closed", "failed"}
             or workflow.now() >= self.state.interaction_deadline
             or self.state.follow_ups_remaining <= 0
         )
@@ -129,10 +129,8 @@ class TravelPlanningSessionWorkflow(PydanticAIWorkflow):
     def request_finalize(self, command: Command) -> Receipt:
         # Finalization is one idempotent state transition; no unbounded list of finalize IDs.
         if not self.finalize_requested and self.state.phase not in {
-            "emailed",
             "closed",
             "failed",
-            "email_failed",
         }:
             self.finalize_requested = True
             self.change(
@@ -242,9 +240,11 @@ class TravelPlanningSessionWorkflow(PydanticAIWorkflow):
             semaphore = asyncio.Semaphore(4)
             first_journey_at: datetime | None = None
 
-            def show_first_journey() -> None:
+            def show_partial_trip() -> None:
                 nonlocal first_journey_at
-                if not initial or self.state.preview_trip is not None:
+                if not initial or (
+                    self.state.preview_trip is not None and self.state.preview_trip.journey
+                ):
                     return
                 for fixture in self.data.fixtures:
                     for batch in batches[fixture.id]:
@@ -269,6 +269,21 @@ class TravelPlanningSessionWorkflow(PydanticAIWorkflow):
                                     progress_message="A journey was found. Checking stays and alternatives…",
                                 )
                                 return
+                if self.state.preview_trip is None:
+                    for fixture in self.data.fixtures:
+                        for batch in batches[fixture.id]:
+                            for stay in batch.stays:
+                                if feasible_stay(stay, fixture, effective, intent):
+                                    self.change(
+                                        preview_trip=Trip(
+                                            fixture=fixture,
+                                            stay=stay,
+                                            summary="A dated stay was found. We’re still checking return travel.",
+                                            gaps=("Return travel is still being checked.",),
+                                        ),
+                                        progress_message="A stay was found. Checking return travel…",
+                                    )
+                                    return
 
             async def acquire_job(
                 key: str, kind: str, spec: SearchSpec, cap: int
@@ -345,7 +360,7 @@ class TravelPlanningSessionWorkflow(PydanticAIWorkflow):
                         self.search_reserved += cap
                         jobs.append((key, kind, spec, cap))
                 timed_out = False
-                show_first_journey()
+                show_partial_trip()
                 if jobs:
                     tasks = [asyncio.create_task(acquire_job(*job)) for job in jobs]
                     pending = tasks
@@ -372,7 +387,7 @@ class TravelPlanningSessionWorkflow(PydanticAIWorkflow):
                             batches[fixture_id].append(response)
                             if kind == "flight":
                                 flight_batches.append(response)
-                        show_first_journey()
+                        show_partial_trip()
                     for task in pending:
                         task.cancel()
                     if pending:
@@ -595,61 +610,19 @@ class TravelPlanningSessionWorkflow(PydanticAIWorkflow):
                 )
             except TimeoutError:
                 pass
-        # A manual send may arrive after a message was accepted but before the loop started it.
+        # A close request may arrive after a message was accepted but before the loop started it.
         if self.pending:
             command, self.pending = self.pending, None
             await self.bounded_turn(command)
         self.finalize_requested = True
-        if self.state.itinerary is None and workflow.patched("no-email-without-itinerary"):
-            self.change(
-                phase="failed",
-                active_turn_id=None,
-                progress_message="No complete trip was found. No email was sent.",
-            )
-            await workflow.wait_condition(workflow.all_handlers_finished)
-            return self.state
-        if self.state.finalization_reason != "manual" and workflow.patched("manual-email-only"):
-            self.change(
-                phase="closed",
-                active_turn_id=None,
-                progress_message="This planning session has ended. No email was sent.",
-            )
-            await workflow.wait_condition(workflow.all_handlers_finished)
-            return self.state
         self.change(
-            phase="finalizing",
+            phase="closed" if self.state.itinerary else "failed",
             active_turn_id=None,
-            email_status="pending",
-            email_kind="itinerary" if self.state.itinerary else "failure_notice",
-            progress_message="Preparing your email from the saved itinerary…",
+            progress_message=(
+                "This planning session has ended. Your results remain visible here."
+                if self.state.itinerary
+                else "No complete trip was found. Any partial results remain visible here."
+            ),
         )
-        frozen = self.state
-        try:
-            provider_id = await workflow.execute_activity(
-                "deliver_itinerary",
-                frozen,
-                result_type=str,
-                start_to_close_timeout=timedelta(seconds=30),
-                schedule_to_close_timeout=timedelta(hours=23),
-                retry_policy=RetryPolicy(
-                    initial_interval=timedelta(seconds=5),
-                    maximum_interval=timedelta(minutes=15),
-                    maximum_attempts=20,
-                ),
-            )
-            self.change(
-                phase="emailed" if self.state.itinerary else "failed",
-                email_status="sent",
-                email_provider_id=provider_id,
-                progress_message="Your email has been prepared."
-                if provider_id.startswith("preview-")
-                else "Your email has been submitted for delivery.",
-            )
-        except Exception:
-            self.change(
-                phase="email_failed",
-                email_status="failed",
-                progress_message="We couldn't confirm email delivery. Your saved draft remains visible.",
-            )
         await workflow.wait_condition(workflow.all_handlers_finished)
         return self.state

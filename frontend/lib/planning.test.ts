@@ -20,7 +20,7 @@ describe("stageFor", () => {
   });
   it("is failed only when terminal without an itinerary", () => {
     expect(stageFor(snap({ phase: "failed" }))).toBe("failed");
-    expect(stageFor(snap({ phase: "emailed", itinerary: {} as Snapshot["itinerary"] }))).toBe("done");
+    expect(stageFor(snap({ phase: "closed", itinerary: {} as Snapshot["itinerary"] }))).toBe("done");
   });
   it("ignores a prior itinerary for in-flight revisions", () => {
     const revising = snap({ itinerary: {} as Snapshot["itinerary"], phase: "revising", progress_message: "Comparing transport and accommodation…" });

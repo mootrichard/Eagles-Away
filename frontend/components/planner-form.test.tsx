@@ -57,8 +57,8 @@ describe("trip brief steps", () => {
     fireEvent.click(screen.getByRole("button", { name: /Continue to travel preferences/ }));
     expect(screen.getByRole("heading", { name: "How do you like to travel?" })).toBeVisible();
     fireEvent.change(screen.getByRole("spinbutton", { name: "Adults" }), { target: { value: "2" } });
-    fireEvent.click(screen.getByRole("button", { name: /Continue to your details/ }));
-    expect(screen.getByRole("heading", { name: "Where should we send your plan?" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /Review your trip/ }));
+    expect(screen.getByRole("heading", { name: "Review your trip" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: /Back/ }));
     await waitFor(() => expect(screen.getByRole("spinbutton", { name: "Adults" })).toHaveValue(2));
   });
@@ -95,13 +95,14 @@ describe("trip brief steps", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Starting from" }), { target: { value: "Manchester" } });
     fireEvent.click(screen.getByRole("button", { name: /Continue to travel preferences/ }));
     fireEvent.change(screen.getByRole("combobox", { name: "Travel by" }), { target: { value: "rail" } });
-    fireEvent.click(screen.getByRole("button", { name: /Continue to your details/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Review your trip/ }));
     expect(screen.queryByRole("textbox", { name: /Anything else/ })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByRole("textbox", { name: "Email address" }), { target: { value: "supporter@example.com" } });
+    expect(screen.queryByRole("textbox", { name: "Email address" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Plan my away day/ }));
     await waitFor(() => expect(vi.mocked(request).mock.calls.some(([path]) => path === "/api/sessions")).toBe(true));
     const submission = vi.mocked(request).mock.calls.find(([path]) => path === "/api/sessions");
     const body = JSON.parse(String(submission?.[1]?.body));
+    expect(body).not.toHaveProperty("email");
     expect(body.brief).toMatchObject({ origin_city: "Manchester", transport_mode: "rail", extra_instructions: "" });
   });
 
@@ -120,8 +121,8 @@ describe("trip brief steps", () => {
     expect(travelBy).toHaveValue("flight");
     expect(travelBy.querySelectorAll("option")).toHaveLength(1);
     expect(screen.getByText(/Main journey train routes are currently available for Lyon only/)).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: /Continue to your details/ }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Email address" }), { target: { value: "supporter@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: /Review your trip/ }));
+    expect(screen.queryByRole("textbox", { name: "Email address" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Plan my away day/ }));
     await waitFor(() => expect(vi.mocked(request).mock.calls.some(([path]) => path === "/api/sessions")).toBe(true));
     const submission = vi.mocked(request).mock.calls.find(([path]) => path === "/api/sessions");

@@ -1,4 +1,4 @@
-"""Three paid Gemini calls through local Temporal; synthetic travel, no email send."""
+"""Three paid Gemini calls through local Temporal; synthetic travel."""
 
 import asyncio
 import json
@@ -22,7 +22,6 @@ from cpfc_trip.domain import (
     SearchBatch,
     SearchSpec,
     SessionInput,
-    Snapshot,
 )
 from cpfc_trip.planner.agent import configure_model, model
 from cpfc_trip.planner.recorded import sample
@@ -39,18 +38,13 @@ async def stay(spec: SearchSpec) -> SearchBatch:
     return sample(spec, "stay")
 
 
-@activity.defn(name="deliver_itinerary")
-async def deliver(state: Snapshot) -> str:
-    return "synthetic-delivery-no-email-sent"
-
-
 async def ready(handle, previous=None):  # type: ignore[no-untyped-def]
     async with asyncio.timeout(180):
         while True:
             state = await handle.query(Workflow.get_snapshot)
             if state.phase == "draft_ready" and state.last_committed_turn_id != previous:
                 return state
-            if state.phase in {"failed", "email_failed"}:
+            if state.phase in {"failed"}:
                 raise RuntimeError("Workflow failed; inspect local history")
             await asyncio.sleep(0.2)
 
@@ -64,14 +58,13 @@ async def main() -> None:
     session_id = uuid4()
     data = SessionInput(
         public_session_id=session_id,
-        contact_id=session_id,
         brief=brief,
         fixtures=(fixtures[0],),
         routes=(routes[0].model_copy(update={"enabled": True}),),
         planner_mode="live",
     )
     queue = str(uuid4())
-    activities = [flight, stay, deliver]
+    activities = [flight, stay]
     states = []
     async with await WorkflowEnvironment.start_local(
         dev_server_existing_path=shutil.which("temporal"), plugins=[PydanticAIPlugin()]
@@ -108,7 +101,7 @@ async def main() -> None:
             states.append(third)
             await handle.execute_update(Workflow.request_finalize, Command(id=uuid4()))
             final = await handle.result()
-            assert final.phase == "emailed"
+            assert final.phase == "closed"
         history = await handle.fetch_history()
         await Replayer(workflows=[Workflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
         folder = Path(".data/gemini-workflow")
@@ -118,7 +111,6 @@ async def main() -> None:
             json.dumps(
                 {
                     "synthetic_travel": True,
-                    "real_email_sent": False,
                     "snapshots": [s.model_dump(mode="json") for s in states],
                     "final": final.model_dump(mode="json"),
                     "replay": "passed",

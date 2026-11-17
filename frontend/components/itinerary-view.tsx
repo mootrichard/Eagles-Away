@@ -15,25 +15,27 @@ function Price({ item }: { item: Leg | Stay }) {
 function MatchCard({ fixture }: { fixture: Fixture }) {
   return <section className="match-card"><span className="eyebrow">MATCHDAY</span><h3>{fixture.opponent} v Crystal Palace</h3><p>{new Date(fixture.kickoff_at).toLocaleString("en-GB", { timeZone: fixture.timezone, dateStyle: "full", timeStyle: "short" })} local</p><p className="fine">{fixture.venue} · {fixture.venue_status} venue · Match ticket not included</p><a className="outbound" href={CPFC_TICKET_URL} target="_blank" rel="noopener noreferrer">CPFC members: buy away match tickets <span className="arrow">↗</span></a></section>;
 }
-export function JourneyPreview({ trip, children }: { trip: Trip; children: ReactNode }) {
+export function JourneyPreview({ trip, ended = false, children }: { trip: Trip; ended?: boolean; children?: ReactNode }) {
   const journey = trip.journey;
-  if (!journey) return null;
-  return <article className="trip panel journey-preview" aria-label="Journey found while planning continues">
-    <div className="section-heading"><p className="eyebrow">{trip.fixture.city.toUpperCase()}</p><span className="tag">Plan in progress</span></div>
+  if (!journey && !trip.stay) return null;
+  return <article className="trip panel journey-preview" aria-label={ended ? "Partial trip results" : journey ? "Journey found while planning continues" : "Stay found while planning continues"}>
+    <div className="section-heading"><p className="eyebrow">{trip.fixture.city.toUpperCase()}</p><span className="tag">{ended ? "Incomplete trip" : "Plan in progress"}</span></div>
     <h2>Palace at {trip.fixture.opponent}</h2>
-    <p>We found a dated return journey. This is not a complete trip yet.</p>
+    <p>We found {journey ? "a dated return journey" : "a dated stay"}. This is not a complete trip yet.</p>
     <div className="timeline">
       <MatchCard fixture={trip.fixture} />
-      <section className="travel-card pending-card" aria-label="Still checking your trip"><span className="card-label">STILL CHECKING</span><h3>Finding your stay and comparing options</h3>{children}</section>
-      {journey.outbound.map(leg => <Transport key={leg.id} leg={leg} />)}
-      {journey.inbound.map(leg => <Transport key={leg.id} leg={leg} />)}
+      {ended ? <aside className="notice"><strong>{journey ? "We couldn’t verify accommodation for this journey." : "We couldn’t verify a return journey for this stay."}</strong><p>Your results are saved below. Prices and availability may have changed. Confirm travel and accommodation for matching dates before booking.</p></aside>
+        : <section className="travel-card pending-card" aria-label="Still checking your trip"><span className="card-label">STILL CHECKING</span><h3>{journey ? "Finding your stay and comparing options" : "Finding your return journey"}</h3>{children}</section>}
+      {journey?.outbound.map(leg => <Transport key={leg.id} leg={leg} />)}
+      {trip.stay && <StayCard stay={trip.stay} />}
+      {journey?.inbound.map(leg => <Transport key={leg.id} leg={leg} />)}
     </div>
   </article>;
 }
 export function ItineraryView({ itinerary }: { itinerary: Itinerary }) {
   return <div>{itinerary.trips.map(trip => <article key={trip.fixture.id} className="trip panel"><div className="section-heading"><p className="eyebrow">{trip.fixture.city.toUpperCase()}</p><span className="tag">{trip.feasibility === "verified" ? "Ready to review" : "Checks outstanding"}</span></div><h2>Palace at {trip.fixture.opponent}</h2><p>{trip.summary}</p>
     <div className="timeline">{trip.journey?.outbound.map(leg => <Transport key={leg.id} leg={leg} />)}
-    {trip.stay && <section className="travel-card"><span className="card-label">STAY · {trip.stay.check_in} — {trip.stay.check_out}</span><h3>{trip.stay.property_name}</h3><p>{trip.stay.room_description}</p><p className="fine">{trip.stay.bathroom} bathroom · {trip.stay.review_score ? `${trip.stay.review_score}/10 review score` : "Review score unavailable"}</p><Price item={trip.stay} />{trip.stay.caveats?.map(c => <p className="fine" key={c}>{c}</p>)}</section>}
+    {trip.stay && <StayCard stay={trip.stay} />}
     <MatchCard fixture={trip.fixture} />
     {trip.journey?.inbound.map(leg => <Transport key={leg.id} leg={leg} />)}</div>
     {!!trip.transfers?.length && <section className="trip-section" aria-label="Transfers"><h3>Getting between the stops</h3>{trip.transfers.map(t => <div key={t.title} className="travel-card"><h4>{t.title}</h4><p>{t.description}</p><a href={t.source_url} target="_blank" rel="noopener noreferrer">Official travel guidance <span className="arrow">↗</span></a><p className="fine">Reviewed {when(t.reviewed_at)} · Transfer fares excluded</p></div>)}</section>}
@@ -42,4 +44,5 @@ export function ItineraryView({ itinerary }: { itinerary: Itinerary }) {
     {!!trip.alternatives?.length && <details className="travel-card"><summary>Other options we found</summary>{trip.alternatives.map(a => <section key={a.journey.id + a.stay.id}><h4>{a.summary}</h4><p>{local(a.journey.outbound[0].departs_at)} — {local(a.journey.inbound[a.journey.inbound.length-1].arrives_at)}</p><p>{a.known_total ? `${formatMoney(a.known_total)} in prices found so far` : "Total unavailable"} · Some costs are missing, so this is not a full price comparison.</p><p className="fine">Ask to change your transport mode, budget or room preferences to revise the plan.</p></section>)}</details>}
     {!!trip.gaps?.length && <aside className="notice"><strong>Before you book</strong><ul>{trip.gaps.map(g => <li key={g}>{g}</li>)}</ul></aside>}</article>)}<p className="fine">{itinerary.caveats?.join(" ")}</p></div>;
 }
+function StayCard({ stay }: { stay: Stay }) { return <section className="travel-card"><span className="card-label">STAY · {stay.check_in} — {stay.check_out}</span><h3>{stay.property_name}</h3><p>{stay.room_description}</p><p className="fine">{stay.bathroom} bathroom · {stay.review_score ? `${stay.review_score}/10 review score` : "Review score unavailable"}</p><Price item={stay} />{stay.caveats?.map(c => <p className="fine" key={c}>{c}</p>)}</section>; }
 function Transport({ leg }: { leg: Leg }) { return <section className="travel-card"><span className="card-label">{leg.mode.toUpperCase()} · {leg.operator} {leg.service_number}</span><h3>{leg.origin} <span className="muted arrow">→</span> {leg.destination}</h3><p>{local(leg.departs_at)} <span className="arrow">→</span> {local(leg.arrives_at)}</p><Price item={leg} />{leg.caveats?.map(c => <p className="fine" key={c}>{c}</p>)}</section>; }

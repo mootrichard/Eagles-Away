@@ -15,5 +15,6 @@ def test_digitalocean_postgresql_url_uses_asyncpg_and_tls(settings: Settings) ->
     try:
         assert database.url.drivername == "postgresql+asyncpg"
         assert database.url.query == {"ssl": "require"}
+        assert database.pool._pre_ping is True
     finally:
         database.sync_engine.dispose(close=False)
