@@ -580,9 +580,12 @@ async def test_live_revision_reuses_searches_after_worker_restart(
         assert "Falsely" not in first.transcript_tail[-1].content
         count = len(searches)
         assert count == 4  # Two waves give one verified option and one comparison.
-        assert searches[0][1:] == searches[1][1:]
-        assert searches[2][1:] == searches[3][1:]
-        assert searches[0][1:] != searches[2][1:]
+        # Both waves run together, so compare searches without relying on start order.
+        date_pairs = {search[1:] for search in searches}
+        assert len(date_pairs) == 2
+        assert sorted(searches) == sorted(
+            (kind, *pair) for pair in date_pairs for kind in ("flight", "stay")
+        )
     async with Worker(
         environment.client, task_queue=queue, workflows=[Workflow], activities=activities
     ):
@@ -645,7 +648,8 @@ async def test_live_search_retries_once_after_lost_attempt(environment, session_
         )
         result = await ready(handle)
     assert result.itinerary is not None
-    assert attempts[:2] == [1, 2]
+    # The lost first attempt is retried once; the comparison wave may start in between.
+    assert attempts[0] == 1 and attempts.count(2) == 1
 
 
 async def test_second_worker_recovers_a_search_when_first_worker_stops(environment, session_input):
@@ -707,7 +711,9 @@ async def test_second_worker_recovers_a_search_when_first_worker_stops(environme
             activities=[recovered_flight, stays, deliver],
         ):
             await asyncio.wait_for(recovered.wait(), timeout=25)
-            for _ in range(100):
+            # Comparison searches start with the first wave, so the stopped worker can also
+            # lose one that only retries after the 15-second heartbeat timeout.
+            for _ in range(500):
                 result = await handle.query(Workflow.get_snapshot)
                 if result.itinerary:
                     break
@@ -763,6 +769,57 @@ async def test_slow_comparison_keeps_first_complete_wave(environment, session_in
         assert state.itinerary.trips[0].stay
         await handle.execute_update(Workflow.request_finalize, Command(id=uuid4()))
         await handle.result()
+
+
+async def test_comparison_wave_starts_before_first_wave_finishes(environment, session_input):
+    from cpfc_trip.domain import SearchBatch, SearchSpec
+    from cpfc_trip.planner.planning import enumerate_specs
+    from cpfc_trip.planner.recorded import sample
+
+    first_spec = enumerate_specs(session_input.brief, session_input.fixtures, session_input.routes)[
+        0
+    ]
+    first_dates = (first_spec.outbound_date, first_spec.return_date)
+    comparison_started = asyncio.Event()
+    searched_dates = set()
+
+    @activity.defn(name="search_flights")
+    async def flights(spec: SearchSpec) -> SearchBatch:
+        dates = (spec.outbound_date, spec.return_date)
+        searched_dates.add(dates)
+        if dates == first_dates:
+            # Sequential waves would never start the comparison while this search waits.
+            await asyncio.wait_for(comparison_started.wait(), timeout=5)
+        else:
+            comparison_started.set()
+        return sample(spec, "flight")
+
+    @activity.defn(name="search_stays")
+    async def stays(spec: SearchSpec) -> SearchBatch:
+        return sample(spec, "stay")
+
+    value = session_input.model_copy(
+        update={
+            "planner_mode": "live",
+            "routes": (session_input.routes[0].model_copy(update={"enabled": True}),),
+        }
+    )
+    queue = str(uuid4())
+    async with Worker(
+        environment.client, task_queue=queue, workflows=[Workflow], activities=[flights, stays]
+    ):
+        handle = await environment.client.start_workflow(
+            Workflow.run, value, id=str(uuid4()), task_queue=queue
+        )
+        state = await ready(handle)
+        assert state.itinerary and state.itinerary.trips[0].journey
+        assert state.itinerary.trips[0].stay
+        assert len(searched_dates) == 2
+        await handle.execute_update(Workflow.request_finalize, Command(id=uuid4()))
+        await handle.result()
+    await Replayer(workflows=[Workflow], plugins=[PydanticAIPlugin()]).replay_workflow(
+        await handle.fetch_history()
+    )
 
 
 @pytest.mark.parametrize("first_kind", ["flight", "stay"])
