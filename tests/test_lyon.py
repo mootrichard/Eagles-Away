@@ -5,7 +5,6 @@ from pathlib import Path
 
 from cpfc_trip.domain import SearchSpec
 from cpfc_trip.origins import routes_for_origin
-from cpfc_trip.planner.agent import Intent
 from cpfc_trip.planner.planning import enumerate_specs, feasible, rank
 from cpfc_trip.planner.providers.searchapi import (
     connect_rail,
@@ -142,26 +141,16 @@ def test_lyon_supported_hours_and_hard_mode(session_input):
     ]
     journey = sample(spec, "flight").journeys[0]
     stay = sample(spec, "stay").stays[0]
-    intent = Intent(action="revise", answer="")
-    assert feasible(journey, stay, spec.fixture, session_input.brief, intent, spec.route)
+    brief = session_input.brief
+    assert feasible(journey, stay, spec.fixture, brief, spec.route)
     assert not feasible(
-        journey,
-        stay,
-        spec.fixture,
-        session_input.brief,
-        intent.model_copy(update={"transport_mode": "rail"}),
-        spec.route,
+        journey, stay, spec.fixture, brief.model_copy(update={"transport_mode": "rail"}), spec.route
     )
     early = journey.inbound[0].model_copy(
         update={"departs_at": journey.inbound[0].departs_at.replace(hour=5)}
     )
     assert not feasible(
-        journey.model_copy(update={"inbound": (early,)}),
-        stay,
-        spec.fixture,
-        session_input.brief,
-        intent,
-        spec.route,
+        journey.model_copy(update={"inbound": (early,)}), stay, spec.fixture, brief, spec.route
     )
 
 

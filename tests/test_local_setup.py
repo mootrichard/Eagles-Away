@@ -36,11 +36,8 @@ def test_new_checkout_is_ready_and_idempotent(setup_module, local_root: Path) ->
         for line in before.splitlines()
         if "=" in line and not line.startswith("#")
     )
-    assert "CONTACT_ENCRYPTION_KEY" not in values
-    assert "SESSION_SECRET" not in values
     assert values["TEMPORAL_TASK_QUEUE"] == "cpfc-trip-v3"
     assert values["PLANNER_MODE"] == "recorded"
-    assert "EMAIL_MODE" not in values
     assert (local_root / ".env").stat().st_mode & 0o777 == 0o600
     setup_module.configure_local(local_root)
     assert (local_root / ".env").read_text() == before
@@ -57,14 +54,3 @@ def test_preserves_custom_secrets_cloud_and_frontend(setup_module, local_root: P
     assert (
         local_root / "frontend/.env.local"
     ).read_text() == "NEXT_PUBLIC_API_ORIGIN=https://team.example\n"
-
-
-def test_migrates_only_obsolete_defaults(setup_module, local_root: Path) -> None:  # type: ignore[no-untyped-def]
-    (local_root / ".env").write_text(
-        "TEMPORAL_TASK_QUEUE=cpfc-trip-v2\nPLANNER_MODE=mock\nEMAIL_MODE=console\n"
-    )
-    setup_module.configure_local(local_root)
-    updated = (local_root / ".env").read_text()
-    assert "TEMPORAL_TASK_QUEUE=cpfc-trip-v3\n" in updated
-    assert "PLANNER_MODE=recorded\n" in updated
-    assert "EMAIL_MODE=" not in updated

@@ -38,6 +38,6 @@ To check a change, stop the frontend development server and run `scripts/check.s
 
 ## How it works
 
-The website uses Next.js. A FastAPI service handles trip requests, Temporal runs the planning workflow, PostgreSQL stores session data, and SearchApi supplies dated travel and hotel results. Google Maps links open fresh local directions. The app shows where a price or route could not be confirmed.
+The website uses Next.js. A FastAPI service handles trip requests, Temporal runs the planning workflow, PostgreSQL stores session data, and SearchApi supplies dated travel and hotel results. Deterministic Python code filters, ranks and summarises the options; no language model is involved. Google Maps links open fresh local directions. The app shows where a price or route could not be confirmed.
 
 For architecture, deployment and project history, see the [engineering handoff](planning/2026-09-30-engineering-handoff.md), [deployment record](planning/2026-10-06-deployment-readiness.md) and [development notes](blog.md).

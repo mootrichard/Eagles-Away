@@ -23,20 +23,9 @@ class Settings(BaseSettings):
     planner_mode: Literal["live", "recorded"] = "live"
     searchapi_api_key: SecretStr = SecretStr("")
     searchapi_enabled: bool = True
-    google_cloud_project: str = ""
-    google_cloud_location: Literal["eu"] = "eu"
-    google_auth_mode: Literal["adc", "gcloud", "api_key"] = "adc"
-    gemini_api_key: SecretStr = SecretStr("")
-    google_gcloud_configuration: str = ""
-    google_gcloud_account: str = ""
-    cloud_sql_instance: str = ""
-    database_user: str = ""
-    database_name: str = "cpfc"
 
     @model_validator(mode="after")
     def production(self) -> Self:
-        if self.google_auth_mode == "api_key" and not self.gemini_api_key.get_secret_value():
-            raise ValueError("Gemini API key is required for api_key authentication")
         if (
             self.app_env == "preview"
             and self.preview_access_required
@@ -44,10 +33,6 @@ class Settings(BaseSettings):
         ):
             raise ValueError("Preview requires access credentials")
         if self.app_env == "production":
-            if self.google_auth_mode != "adc" or not self.google_cloud_project:
-                raise ValueError(
-                    "Production requires a Google Cloud project and ADC runtime identity"
-                )
             if self.planner_mode != "live":
                 raise ValueError("Production requires live planning")
             if not self.temporal_tls or not self.worker_build_id:

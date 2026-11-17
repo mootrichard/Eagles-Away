@@ -14,18 +14,12 @@ describe("stageFor", () => {
     expect(stageFor(snap({ progress_message: "Comparing transport and accommodation…" }))).toBe("searching");
     expect(stageFor(snap({ progress_message: "A journey was found. Checking stays…", preview_trip: {} as Snapshot["preview_trip"] }))).toBe("searching");
   });
-  it("is done when an itinerary exists or the phase is draft_ready", () => {
+  it("is done when an itinerary exists", () => {
     expect(stageFor(snap({ itinerary: {} as Snapshot["itinerary"] }))).toBe("done");
-    expect(stageFor(snap({ phase: "draft_ready" }))).toBe("done");
+    expect(stageFor(snap({ phase: "closed", itinerary: {} as Snapshot["itinerary"] }))).toBe("done");
   });
   it("is failed only when terminal without an itinerary", () => {
     expect(stageFor(snap({ phase: "failed" }))).toBe("failed");
-    expect(stageFor(snap({ phase: "closed", itinerary: {} as Snapshot["itinerary"] }))).toBe("done");
-  });
-  it("ignores a prior itinerary for in-flight revisions", () => {
-    const revising = snap({ itinerary: {} as Snapshot["itinerary"], phase: "revising", progress_message: "Comparing transport and accommodation…" });
-    expect(stageFor(revising)).toBe("done");
-    expect(stageFor(revising, { ignoreItinerary: true })).toBe("searching");
   });
 });
 

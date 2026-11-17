@@ -1,5 +1,5 @@
-from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
 from temporalio.client import Client
+from temporalio.contrib.pydantic import pydantic_data_converter
 
 from cpfc_trip.config import Settings
 
@@ -10,5 +10,5 @@ async def connect(settings: Settings) -> Client:
         namespace=settings.temporal_namespace,
         tls=settings.temporal_tls,
         api_key=settings.temporal_api_key.get_secret_value() or None,
-        plugins=[PydanticAIPlugin()],
+        data_converter=pydantic_data_converter,
     )

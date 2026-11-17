@@ -16,7 +16,6 @@ from cpfc_trip.domain import (
     Stay,
     Trip,
 )
-from cpfc_trip.planner.agent import Intent
 from cpfc_trip.planner.maps_links import transfer_links
 from cpfc_trip.planner.prices import total
 
@@ -46,7 +45,13 @@ def enumerate_specs(
             )
         )
         pairs = pairs[:3]
-        allowed = [r for r in routes if r.fixture_id == f.id and (r.enabled or recorded)]
+        allowed = [
+            r
+            for r in routes
+            if r.fixture_id == f.id
+            and (r.enabled or recorded)
+            and (not brief.transport_mode or r.mode == brief.transport_mode)
+        ]
         options = [
             SearchSpec(
                 fixture=f,
@@ -55,6 +60,8 @@ def enumerate_specs(
                 outbound_date=start,
                 return_date=end,
                 budget_tier=brief.budget_tier,
+                private_room=brief.private_room,
+                private_bathroom=brief.private_bathroom,
             )
             for start, end in pairs
             for r in allowed
@@ -69,7 +76,7 @@ def enumerate_specs(
     ]
 
 
-def feasible_stay(stay: Stay, fixture: Fixture, brief: Brief, intent: Intent) -> bool:
+def feasible_stay(stay: Stay, fixture: Fixture, brief: Brief) -> bool:
     """Check a standalone stay covers match night and the requested room constraints."""
     match_day = fixture.kickoff_at.astimezone(ZoneInfo(fixture.timezone)).date()
     window = next(window for window in brief.windows if window.fixture_id == fixture.id)
@@ -79,8 +86,8 @@ def feasible_stay(stay: Stay, fixture: Fixture, brief: Brief, intent: Intent) ->
         <= match_day
         < stay.check_out
         <= window.latest_return.date()
-        and (not intent.private_room or stay.room_type == "private")
-        and (not intent.private_bathroom or stay.bathroom == "private")
+        and (not brief.private_room or stay.room_type == "private")
+        and (not brief.private_bathroom or stay.bathroom == "private")
         and (
             stay.max_guests is None
             or stay.max_guests * brief.travellers.rooms >= brief.travellers.size
@@ -93,10 +100,9 @@ def feasible(
     stay: Stay,
     fixture: Fixture,
     brief: Brief,
-    intent: Intent,
     route: Route | None = None,
 ) -> bool:
-    if not feasible_journey(journey, fixture, brief, intent, route):
+    if not feasible_journey(journey, fixture, brief, route):
         return False
     outbound, inbound = journey.outbound, journey.inbound
     if (
@@ -104,9 +110,9 @@ def feasible(
         or stay.check_out != inbound[0].departs_at.astimezone(ZoneInfo(fixture.timezone)).date()
     ):
         return False
-    if intent.private_room and stay.room_type != "private":
+    if brief.private_room and stay.room_type != "private":
         return False
-    if intent.private_bathroom and stay.bathroom != "private":
+    if brief.private_bathroom and stay.bathroom != "private":
         return False
     if (
         stay.max_guests is not None
@@ -120,15 +126,12 @@ def feasible_journey(
     journey: Journey,
     fixture: Fixture,
     brief: Brief,
-    intent: Intent,
     route: Route | None = None,
 ) -> bool:
     """Check that a dated return journey fits the brief before showing it."""
     window = next(w for w in brief.windows if w.fixture_id == fixture.id)
-    if intent.unsupported_requirements:
-        return False
     outbound, inbound = journey.outbound, journey.inbound
-    if intent.transport_mode and outbound[0].mode != intent.transport_mode:
+    if brief.transport_mode and outbound[0].mode != brief.transport_mode:
         return False
     if route:
         local = ZoneInfo(fixture.timezone)
@@ -159,11 +162,6 @@ def feasible_journey(
     for direction in (outbound, inbound):
         if any(b.departs_at < a.arrives_at for a, b in pairwise(direction)):
             return False
-    if intent.preferred_airports and (
-        outbound[0].origin not in intent.preferred_airports
-        or inbound[-1].destination not in intent.preferred_airports
-    ):
-        return False
     return True
 
 
@@ -190,7 +188,6 @@ def choose(
     batches: list[SearchBatch],
     brief: Brief,
     routes: tuple[Route, ...],
-    intent: Intent,
 ) -> Trip:
     journeys = [j for b in batches for j in b.journeys]
     stays = [s for b in batches for s in b.stays]
@@ -199,7 +196,7 @@ def choose(
         (j, s)
         for j in journeys
         for s in stays
-        if j.route_id in by_route and feasible(j, s, fixture, brief, intent, by_route[j.route_id])
+        if j.route_id in by_route and feasible(j, s, fixture, brief, by_route[j.route_id])
     ]
     if not candidates:
         return Trip(
@@ -209,7 +206,6 @@ def choose(
                 dict.fromkeys(
                     [
                         "Travel and accommodation evidence is incomplete.",
-                        *intent.unsupported_requirements,
                         *(g for b in batches for g in b.gaps),
                     ]
                 )

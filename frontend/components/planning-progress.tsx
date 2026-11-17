@@ -36,7 +36,7 @@ export function PlanningProgress({ snapshot, city, origin = "London", variant = 
   forceDone?: boolean;
 }) {
   const reduced = useReducedMotion();
-  const stage: Stage = forceDone ? "done" : stageFor(snapshot, { ignoreItinerary: variant === "preview" });
+  const stage: Stage = forceDone ? "done" : stageFor(snapshot);
   const lines = variant === "preview" ? [
     city ? `Checking places to stay in ${city}…` : "Checking places to stay…",
     "Comparing available rooms and prices…",

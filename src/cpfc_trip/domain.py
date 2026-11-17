@@ -44,7 +44,6 @@ class Brief(Record):
     budget_tier: Literal["budget", "value", "comfort"] = "value"
     flexibility: Literal["tight", "day_either_side", "two_days"] = "day_either_side"
     windows: tuple[Window, ...] = Field((), max_length=4)
-    extra_instructions: str = Field("", max_length=2000)
     private_room: bool = False
     private_bathroom: bool = False
     transport_mode: Literal["flight", "rail"] | None = None
@@ -117,14 +116,8 @@ class Route(Record):
 
 
 class Limits(Record):
-    initial_seconds: int = Field(180, ge=1, le=180)
-    follow_up_seconds: int = Field(90, ge=1, le=90)
-    interaction_seconds: int = Field(1800, ge=1, le=1800)
-    follow_ups: int = Field(10, ge=1, le=10)
-    search_initial: int = Field(64, ge=1, le=64)
-    search_follow_up: int = Field(16, ge=1, le=16)
-    search_session: int = Field(128, ge=1, le=128)
-    model_session: int = Field(32, ge=1, le=32)
+    planning_seconds: int = Field(180, ge=1, le=180)
+    search_calls: int = Field(64, ge=1, le=64)
 
 
 class SessionInput(Record):
@@ -135,14 +128,6 @@ class SessionInput(Record):
     limits: Limits = Limits()
     planner_mode: Literal["live", "recorded"] = "live"
     catalog_version: str = "2026-10-05.away.1"
-
-    @model_validator(mode="before")
-    @classmethod
-    def discard_legacy_contact(cls, value: object) -> object:
-        """Read stored session inputs created before recipient collection was removed."""
-        if isinstance(value, dict):
-            return {key: item for key, item in value.items() if key != "contact_id"}
-        return value
 
 
 class Money(Record):
@@ -252,7 +237,6 @@ class Trip(Record):
 
 
 class Itinerary(Record):
-    revision: int = Field(ge=1)
     generated_at: AwareDatetime
     trips: tuple[Trip, ...] = Field(min_length=1, max_length=4)
     caveats: tuple[str, ...] = (
@@ -262,38 +246,7 @@ class Itinerary(Record):
     ranking_policy_version: str = "1"
 
 
-class Command(Record):
-    id: UUID
-    expected_revision: int | None = Field(None, ge=0)
-
-
-class MessageCommand(Command):
-    text: str = Field(min_length=1, max_length=2000)
-
-
-class Receipt(Record):
-    command_id: UUID
-    accepted: bool
-    reason: Literal["accepted", "busy", "closed", "stale"] = "accepted"
-
-
-class ChatTurn(Record):
-    id: str
-    turn_id: UUID
-    role: Literal["user", "assistant"]
-    content: str = Field(max_length=6000)
-    created_at: AwareDatetime
-
-
-Phase = Literal[
-    "created",
-    "researching",
-    "draft_ready",
-    "revising",
-    "finalizing",
-    "closed",
-    "failed",
-]
+Phase = Literal["created", "researching", "closed", "failed"]
 
 
 class Snapshot(Record):
@@ -306,29 +259,6 @@ class Snapshot(Record):
     itinerary: Itinerary | None = None
     # A checked journey or stay can be shown before a complete trip is verified.
     preview_trip: Trip | None = None
-    transcript_tail: tuple[ChatTurn, ...] = ()
-    active_turn_id: UUID | None = None
-    last_committed_turn_id: UUID | None = None
-    interaction_deadline: AwareDatetime
-    follow_ups_remaining: int = 10
-    finalization_reason: Literal["manual", "inactivity", "limit", "planning_failed"] | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def read_legacy_result(cls, value: object) -> object:
-        """Keep completed plans readable after retiring their delivery metadata."""
-        if not isinstance(value, dict):
-            return value
-        result = {
-            key: item
-            for key, item in value.items()
-            if key not in {"email_kind", "email_status", "email_provider_id"}
-        }
-        if result.get("phase") in {"emailed", "email_failed"}:
-            result["phase"] = "closed"
-        if "email_status" in value and result.get("phase") == "closed":
-            result["progress_message"] = "This planning session has ended."
-        return result
 
 
 class SearchSpec(Record):

@@ -39,12 +39,11 @@ export function PlanExperience() {
       } catch (e) {
         if (stopped) return;
         failures++;
-        setError(e instanceof ApiError && e.status === 404 ? "This session is unavailable in this browser." : "Reconnecting… Your displayed draft is still saved.");
+        setError(e instanceof ApiError && e.status === 404 ? "This session is unavailable in this browser." : "Reconnecting…");
       } finally {
         inFlight = false;
         if (!stopped && !terminal(current.current)) {
-          const idle = current.current?.phase === "draft_ready" && !current.current.active_turn_id;
-          timer = setTimeout(poll, failures ? Math.min(30000, 2000 * 2 ** failures) : (idle ? 20000 : 2000) + Math.random() * 200);
+          timer = setTimeout(poll, failures ? Math.min(30000, 2000 * 2 ** failures) : 2000 + Math.random() * 200);
         }
       }
     }
@@ -77,7 +76,7 @@ export function PlanExperience() {
   if (!session) return <div className="plan panel"><h1>No session selected</h1><Link href="/">Start a trip brief <span className="arrow">→</span></Link></div>;
   const origin = snapshot?.origin_city ?? "your city";
   return <div className="plan">{snapshot?.development_mode && <div className="notice">Development preview · Synthetic trips and prices</div>}<div className="plan-heading"><div><p className="eyebrow">YOUR AWAY DAYS</p><h1>A plan worth<br />travelling for.</h1></div><span className="tag">From {origin}</span></div>
-    <div className={terminal(snapshot) ? "status" : "status sr-only"} role="status" aria-live="polite">{snapshot?.phase === "failed" ? "We couldn’t complete this trip request." : snapshot?.progress_message ?? "Connecting to your planning session…"}</div>
+    <div className={terminal(snapshot) ? "status" : "status sr-only"} role="status" aria-live="polite">{snapshot?.progress_message ?? "Connecting to your planning session…"}</div>
     {error && <p className="error" role="alert">{error}</p>}
     {!snapshot?.itinerary && !snapshot?.preview_trip && !terminal(snapshot) && (showHero
       ? <PlanningProgress snapshot={snapshot} city={city} origin={origin} variant="hero" />
@@ -86,6 +85,6 @@ export function PlanExperience() {
     {completing && <PlanningProgress snapshot={snapshot} city={city} origin={origin} variant="hero" forceDone />}
     {terminal(snapshot) && !snapshot?.itinerary && <p className="notice">{snapshot?.preview_trip ? "Your partial results are saved here. A complete itinerary could not be verified. " : "No itinerary was saved for this request. "}<Link href="/">Try another trip brief <span className="arrow">→</span></Link></p>}
     {snapshot?.itinerary && !completing && <div className="plan-reveal"><ItineraryView itinerary={snapshot.itinerary} /></div>}
-    {snapshot?.itinerary && terminal(snapshot) && <p className="fine">This planning session has ended. <Link href="/">Start a new trip brief <span className="arrow">→</span></Link></p>}
+    {snapshot?.itinerary && terminal(snapshot) && <p className="fine"><Link href="/">Start a new trip brief <span className="arrow">→</span></Link></p>}
   </div>;
 }

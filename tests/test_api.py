@@ -134,11 +134,12 @@ async def test_api_auth_polling_204_and_csrf(
         assert response.status_code == 204 and response.headers["cache-control"] == "no-store"
         assert (
             await client.post(
-                f"/api/sessions/{sid}/close",
-                json={"id": str(uuid4())},
-                headers={"Origin": "https://evil.example"},
+                "/api/sessions",
+                json={"submission_id": str(uuid4()), "brief": {"fixture_ids": ["x"]}},
+                headers={"Origin": "https://evil.example", "X-Submission-Token": "x" * 64},
             )
         ).status_code == 403
+        assert not repository.create.called
         handle.query.assert_awaited_once()
         handle.query.side_effect = WorkflowQueryFailedError("sensitive upstream diagnostics")
         response = await client.get(f"/api/sessions/{sid}/snapshot")

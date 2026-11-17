@@ -8,7 +8,7 @@ import formCatalog from "../lib/form-catalog.json";
 import { trackAnalytics } from "../lib/analytics";
 import { CPFC_TICKET_URL } from "../lib/tickets";
 
-const stepNames = ["Match & dates", "Travel preferences", "Review"] as const;
+const stepNames = ["Match & dates", "Travel preferences"] as const;
 const bundledFixtures = formCatalog.fixtures as Fixture[];
 
 function selectedOrFirst(current: string, available: Fixture[]): string {
@@ -64,7 +64,6 @@ export function PlannerForm() {
 
   function moveTo(next: number) {
     if (step === 0 && next === 1) trackAnalytics("form_match_complete");
-    if (step === 1 && next === 2) trackAnalytics("form_preferences_complete");
     setHasNavigated(true);
     setError("");
     setStep(next);
@@ -96,7 +95,7 @@ export function PlannerForm() {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (step !== 2 || !selected) return;
+    if (step !== 1 || !selected) return;
     setBusy(true);
     setError("");
     const form = new FormData(event.currentTarget);
@@ -114,7 +113,6 @@ export function PlannerForm() {
       private_room: form.get("private_room") === "on",
       private_bathroom: form.get("private_bathroom") === "on",
       transport_mode: railAvailable ? transport : "flight",
-      extra_instructions: "",
     };
     const content = JSON.stringify({ brief });
     if (!attempt.current || attempt.current.body !== content) {
@@ -166,15 +164,9 @@ export function PlannerForm() {
         <fieldset className="budget"><legend>Your travel style</legend>{([ ["budget", "£", "Keep it cheap", "Dorms and shared bathrooms can be included"], ["value", "££", "Best value", "Balance price, comfort and journey time"], ["comfort", "£££", "Comfort first", "Fewer changes and more comfortable stays"] ] as const).map(([value, price, title, help]) => <label key={value} className={budget === value ? "selected" : ""}><input type="radio" name="budget" value={value} checked={budget === value} onChange={() => setBudget(value)} /><b>{price}</b><span>{title}<small>{help}</small></span></label>)}</fieldset>
         <p className="fine">Travel style changes which options we recommend. It doesn’t guarantee the lowest price.</p>
         <div className="grid-two preference-checks"><label><input type="checkbox" name="private_room" /> Private room required</label><label><input type="checkbox" name="private_bathroom" /> Private bathroom required</label></div>
-        <div className="form-actions"><button type="button" className="text-button" onClick={() => moveTo(0)}><span className="arrow">←</span> Back</button><button type="button" className="primary" onClick={nextStep}>Review your trip <span className="arrow">→</span></button></div>
-      </section>
-
-      <section className="form-page" data-form-step="2" hidden={step !== 2} aria-labelledby={step === 2 ? "form-step-heading" : undefined}>
-        <h2 id={step === 2 ? "form-step-heading" : undefined} ref={step === 2 ? headingRef : undefined} tabIndex={-1}>Review your trip</h2>
-        <p className="form-help">Your results will appear on the next page. No account needed.</p>
-        <p className="fine"><Link href="/privacy/">How we use your data</Link>.</p>
+        <p className="fine">Your results will appear on the next page. No account needed. <Link href="/privacy/">How we use your data</Link>.</p>
         <div className="form-review"><strong>Before you start</strong><p>{origin === "London" ? railAvailable ? "We’ll search flights from Heathrow, Gatwick, Stansted or Luton, plus supported St Pancras routes." : "We’ll search flights from Heathrow, Gatwick, Stansted or Luton." : railAvailable ? `We’ll search flights from ${origin} and dated trains through London and Paris. Allow time to change stations in both cities.` : `We’ll search flights from the supported airport near ${origin}.`} We check nonstop flights first, then suitable one-stop flights if needed.{selectedFixture?.city === "Białystok" ? " For Białystok, we’ll check a train from Warsaw and leave time for the airport transfer. Train fares may be unavailable." : ""} Routes and prices depend on what the provider can verify. Your journey to the departure point and match tickets are outside this plan.</p></div>
-        <div className="form-actions"><button type="button" className="text-button" onClick={() => moveTo(1)}><span className="arrow">←</span> Back</button><button className="primary" disabled={!selected || busy}>{busy ? "Starting your session…" : <>Plan my away day <span className="arrow">→</span></>}</button></div>
+        <div className="form-actions"><button type="button" className="text-button" onClick={() => moveTo(0)}><span className="arrow">←</span> Back</button><button className="primary" disabled={!selected || busy}>{busy ? "Starting your session…" : <>Plan my away day <span className="arrow">→</span></>}</button></div>
       </section>
     </fieldset>
   </form>;
