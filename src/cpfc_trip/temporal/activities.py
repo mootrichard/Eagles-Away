@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from contextlib import suppress
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -50,10 +51,20 @@ class SearchActivities:
                 return cached
         except (SQLAlchemyError, TimeoutError):
             logging.warning("Shared search cache read failed", exc_info=True)
+        started = time.monotonic()
         result = await acquire(spec, mode)
+        if result.provider_failed:
+            try:
+                async with asyncio.timeout(1):
+                    stale = await self.cache.stale(spec, mode)
+            except (SQLAlchemyError, TimeoutError):
+                logging.warning("Shared search cache read failed", exc_info=True)
+                stale = None
+            # The failed attempt's calls were still spent; keep them in the budget.
+            return stale.model_copy(update={"calls": result.calls}) if stale else result
         try:
             async with asyncio.timeout(1):
-                await self.cache.put(spec, mode, result)
+                await self.cache.put(spec, mode, result, fetch_seconds=time.monotonic() - started)
         except (SQLAlchemyError, TimeoutError):
             logging.warning("Shared search cache write failed", exc_info=True)
         return result

@@ -277,3 +277,5 @@ class SearchBatch(Record):
     stays: tuple[Stay, ...] = ()
     gaps: tuple[str, ...] = ()
     calls: int = 0
+    # The provider errored (not merely returned nothing); a cached copy may stand in.
+    provider_failed: bool = False

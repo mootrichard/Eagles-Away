@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, String
+from sqlalchemy import JSON, DateTime, Float, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -25,3 +25,4 @@ class SearchCacheRow(Base):
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     payload: Mapped[dict[str, object]] = mapped_column(JSON)
     stored_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    fetch_seconds: Mapped[float] = mapped_column(Float)

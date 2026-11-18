@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     searchapi_enabled: bool = True
     # How long a stored search result is reused; 0 always searches live.
     search_cache_ttl_minutes: int = Field(1440, ge=0)
+    # Extra time a result may stand in when the live search fails.
+    search_cache_stale_if_error_minutes: int = Field(1440, ge=0)
+    # Probabilistic early refresh: mean lead before expiry is beta x the search's duration.
+    search_cache_early_beta: float = Field(240.0, ge=0)
 
     @model_validator(mode="after")
     def production(self) -> Self:
