@@ -24,4 +24,4 @@ class SearchCacheRow(Base):
     namespace: Mapped[str] = mapped_column(String(16), primary_key=True)
     key: Mapped[str] = mapped_column(String(64), primary_key=True)
     payload: Mapped[dict[str, object]] = mapped_column(JSON)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    stored_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

@@ -73,6 +73,28 @@ async def test_transport_cache_is_shared_for_24_hours_and_party_safe(
     assert await reader.get(request, "flight", now=CHECKED + timedelta(hours=24)) is None
 
 
+async def test_configured_ttl_applies_to_rows_already_stored(
+    cache_engine: AsyncEngine, session_input: SessionInput
+) -> None:
+    """Changing the TTL changes reuse of existing rows; zero always searches live."""
+    request = search_spec(session_input)
+    batch = sample(request, "flight")
+    await SearchCache(cache_engine).put(request, "flight", batch, now=CHECKED)
+    later = CHECKED + timedelta(hours=30)
+
+    assert await SearchCache(cache_engine).get(request, "flight", now=later) is None
+    week = SearchCache(cache_engine, timedelta(days=7))
+    assert await week.get(request, "flight", now=later) is not None
+    short = SearchCache(cache_engine, timedelta(minutes=10))
+    assert await short.get(request, "flight", now=CHECKED + timedelta(minutes=11)) is None
+
+    disabled = SearchCache(cache_engine, timedelta(0))
+    assert await disabled.get(request, "flight", now=CHECKED) is None
+    other = request.model_copy(update={"party": Party(adults=1)})
+    await disabled.put(other, "flight", sample(other, "flight"), now=CHECKED)
+    assert await week.get(other, "flight", now=CHECKED) is None
+
+
 async def test_hotel_cache_ignores_route_but_keys_preferences(
     cache_engine: AsyncEngine, session_input: SessionInput
 ) -> None:

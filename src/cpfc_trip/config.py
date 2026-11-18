@@ -1,6 +1,6 @@
 from typing import Literal, Self
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     planner_mode: Literal["live", "recorded"] = "live"
     searchapi_api_key: SecretStr = SecretStr("")
     searchapi_enabled: bool = True
+    # How long a stored search result is reused; 0 always searches live.
+    search_cache_ttl_minutes: int = Field(1440, ge=0)
 
     @model_validator(mode="after")
     def production(self) -> Self:

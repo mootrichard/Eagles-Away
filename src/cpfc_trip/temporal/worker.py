@@ -19,7 +19,9 @@ async def run() -> None:
     db = engine(settings)
     try:
         client = await connect(settings)
-        search = SearchActivities(SearchCache(db))
+        search = SearchActivities(
+            SearchCache(db, timedelta(minutes=settings.search_cache_ttl_minutes))
+        )
         deployment = (
             WorkerDeploymentConfig(
                 version=WorkerDeploymentVersion(

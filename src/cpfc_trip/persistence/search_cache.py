@@ -1,4 +1,8 @@
-"""24-hour shared cache of normalized provider results, split by search domain."""
+"""Shared cache of normalized provider results, split by search domain.
+
+Freshness is decided when reading: rows record when they were stored, and the configured
+TTL applies to existing rows immediately. A zero TTL disables the cache.
+"""
 
 import hashlib
 import json
@@ -14,7 +18,7 @@ from cpfc_trip.domain import SearchBatch, SearchSpec
 from cpfc_trip.persistence.models import SearchCacheRow
 
 SearchMode = Literal["flight", "rail", "stay"]
-CACHE_TTL = timedelta(hours=24)
+DEFAULT_TTL = timedelta(hours=24)
 
 
 def cache_identity(spec: SearchSpec, mode: SearchMode) -> tuple[str, str]:
@@ -54,23 +58,26 @@ def cache_identity(spec: SearchSpec, mode: SearchMode) -> tuple[str, str]:
 class SearchCache:
     """Share positive normalized batches across workers without changing their evidence times."""
 
-    def __init__(self, database: AsyncEngine) -> None:
+    def __init__(self, database: AsyncEngine, ttl: timedelta = DEFAULT_TTL) -> None:
         self.sessions = async_sessionmaker(database, expire_on_commit=False)
+        self.ttl = ttl
 
     async def get(
         self, spec: SearchSpec, mode: SearchMode, *, now: datetime | None = None
     ) -> SearchBatch | None:
-        """Return an unexpired batch with zero new provider calls, or ``None``."""
+        """Return a batch stored within the TTL with zero new provider calls, or ``None``."""
+        if self.ttl <= timedelta(0):
+            return None
         namespace, key = cache_identity(spec, mode)
         checked = now or datetime.now(UTC)
         async with self.sessions() as session:
             row = await session.get(SearchCacheRow, (namespace, key))
         if row is None:
             return None
-        expires_at = row.expires_at
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=UTC)
-        if expires_at <= checked:
+        stored_at = row.stored_at
+        if stored_at.tzinfo is None:
+            stored_at = stored_at.replace(tzinfo=UTC)
+        if stored_at <= checked - self.ttl:
             return None
         try:
             return SearchBatch.model_validate(row.payload).model_copy(update={"calls": 0})
@@ -85,8 +92,8 @@ class SearchCache:
         *,
         now: datetime | None = None,
     ) -> None:
-        """Keep only successful batches; opportunistically remove expired rows."""
-        if not (batch.stays if mode == "stay" else batch.journeys):
+        """Keep only successful batches; opportunistically remove rows older than the TTL."""
+        if self.ttl <= timedelta(0) or not (batch.stays if mode == "stay" else batch.journeys):
             return
         namespace, key = cache_identity(spec, mode)
         checked = now or datetime.now(UTC)
@@ -94,10 +101,10 @@ class SearchCache:
             dict[str, object],
             json.loads(batch.model_copy(update={"calls": 0}).model_dump_json()),
         )
-        values = {"payload": payload, "expires_at": checked + CACHE_TTL}
+        values = {"payload": payload, "stored_at": checked}
         async with self.sessions.begin() as session:
             await session.execute(
-                delete(SearchCacheRow).where(SearchCacheRow.expires_at <= checked)
+                delete(SearchCacheRow).where(SearchCacheRow.stored_at <= checked - self.ttl)
             )
             try:
                 async with session.begin_nested():
