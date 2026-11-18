@@ -62,6 +62,7 @@ LONDON_TRANSFER = TransferGuidance(
         "transport, the Eurostar check-in time and any disruption. Separate tickets may not "
         "protect a missed connection; London transfer fares are not included."
     ),
+    summary="London terminal → St Pancras",
     source_url="https://www.eurostar.com/uk-en/travel-info/your-trip/check-in",
     reviewed_at=datetime(2026, 10, 5, tzinfo=UTC),
 )
@@ -110,6 +111,11 @@ def routes_for_origin(routes: tuple[Route, ...], city: str) -> tuple[Route, ...]
                             + " Edinburgh rail can arrive late; confirm hotel check-in before booking."
                             if name == "Edinburgh"
                             else route.transfer_note
+                        ),
+                        "transfer_headline": (
+                            "Late Edinburgh arrival: confirm hotel check-in"
+                            if name == "Edinburgh"
+                            else route.transfer_headline
                         ),
                         "source_urls": (*route.source_urls, LONDON_TRANSFER.source_url),
                     }

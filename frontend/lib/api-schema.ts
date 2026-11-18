@@ -153,6 +153,19 @@ export interface components {
             /** Transport Mode */
             transport_mode?: ("flight" | "rail") | null;
         };
+        /**
+         * Check
+         * @description Something the traveller must confirm before booking: a short headline plus full detail.
+         */
+        Check: {
+            /** Headline */
+            headline: string;
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+        };
         /** Coordinates */
         Coordinates: {
             /** Latitude */
@@ -314,6 +327,11 @@ export interface components {
             title: string;
             /** Description */
             description: string;
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
             /** Url */
             url: string;
         };
@@ -486,6 +504,11 @@ export interface components {
             title: string;
             /** Description */
             description: string;
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
             /** Source Url */
             source_url: string;
             /**
@@ -516,6 +539,11 @@ export interface components {
              * @default []
              */
             gaps: string[];
+            /**
+             * Checks
+             * @default []
+             */
+            checks: components["schemas"]["Check"][];
             /** Summary */
             summary: string;
             /**

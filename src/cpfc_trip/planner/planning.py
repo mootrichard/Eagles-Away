@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from cpfc_trip.domain import (
     Alternative,
     Brief,
+    Check,
     Fixture,
     Journey,
     Party,
@@ -297,9 +298,14 @@ def choose(
         [*(x.quote for x in journey.outbound + journey.inbound), stay.quote, None, None, None],
         brief.travellers,
     )
-    gaps = [
-        route.transfer_note,
-        "Confirm late check-in and post-match access to the accommodation.",
+    checks = [
+        Check(
+            headline=route.transfer_headline or "Check local transfers", detail=route.transfer_note
+        ),
+        Check(
+            headline="Late check-in & post-match access",
+            detail="Confirm late check-in and post-match access to the accommodation.",
+        ),
     ]
     if (
         route.onward_stations
@@ -307,9 +313,20 @@ def choose(
         and all(leg.mode != "rail" for leg in journey.outbound)
     ):
         # Never label an airport-only journey as a complete trip to an onward destination.
-        gaps.append("Onward rail has not been verified; this is an incomplete travel option.")
+        checks.append(
+            Check(
+                headline="Onward rail not verified",
+                detail="Onward rail has not been verified; this is an incomplete travel option.",
+            )
+        )
     if fixture.venue_status != "confirmed":
-        gaps.append("The match venue and away-supporter access instructions remain provisional.")
+        checks.append(
+            Check(
+                headline="Venue & away-end access provisional",
+                detail="The match venue and away-supporter access instructions remain provisional.",
+            )
+        )
+    gaps = [c.detail for c in checks]
     alternatives = []
     seen = {(journey.outbound[0].mode, stay.property_name)}
     for other, room in candidates[1:]:
@@ -339,6 +356,7 @@ def choose(
         known_total=amount,
         price_coverage=coverage,
         gaps=tuple(gaps),
+        checks=tuple(checks),
         feasibility="needs_checks",
         transfers=route.guidance,
         maps_transfers=transfer_links(brief.origin_city, journey, stay, fixture),

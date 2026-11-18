@@ -10,55 +10,82 @@ import { Icon } from "./icons";
 const scopeLabel = { round_trip: "Return", leg: "One way", stay: "Whole stay", night: "Per night", unknown: "" } as const;
 const unitLabel = { party: "group", person: "person", room: "room", bed: "bed", unknown: "" } as const;
 
-function Price({ item }: { item: Leg | Stay }) {
+// Every caveat stays available, but behind one compact "N checks" pill per row.
+function itemChecks(item: Leg | Stay): string[] {
   const q = item.quote;
-  const source = item.offer.evidence.underlying_source;
-  const notes = [
+  return [...new Set([
     q?.taxes === "excluded" ? "Taxes not included" : q?.taxes === "unknown" ? "Taxes not confirmed" : "",
-    q?.additional_taxes ? `+${formatMoney(q.additional_taxes)} tax indicated` : "",
     ...(q?.caveats ?? []),
     ...item.caveats,
-  ].filter(Boolean);
+    item.offer.link_kind === "contextual_search" && item.offer.booking_url ? "The link opens a fresh search; you may need to reselect this option." : "",
+  ].filter(Boolean))];
+}
+
+function ChecksTrigger({ count, label }: { count: number; label: string }) {
+  return <CollapsibleTrigger className="checks-pill" aria-label={`${count} check${count === 1 ? "" : "s"} for ${label}`}>
+    <Icon name="alert" size={12} />{count} check{count === 1 ? "" : "s"}<Icon name="chevron" size={12} className="icon chevron" />
+  </CollapsibleTrigger>;
+}
+
+function ChecksPanel({ checks }: { checks: string[] }) {
+  return <CollapsiblePanel className="checks-panel"><ul>{checks.map(n => <li key={n}>{n}</li>)}</ul></CollapsiblePanel>;
+}
+
+function Price({ item, checks, label }: { item: Leg | Stay; checks: string[]; label: string }) {
+  const q = item.quote;
+  const source = item.offer.evidence.underlying_source;
+  const scope = [scopeLabel[q?.scope ?? "unknown"], q && unitLabel[q.unit] && `per ${unitLabel[q.unit]}`].filter(Boolean).join(" · ").replace("per group", "for the group");
   return <div className="price">
     {q
-      ? <><strong>{formatMoney(q.amount)}</strong><small>{[scopeLabel[q.scope], unitLabel[q.unit] && `per ${unitLabel[q.unit]}`].filter(Boolean).join(" · ").replace("per group", "for the group")}</small></>
+      ? <><strong>{formatMoney(q.amount)}</strong><small>{[scope, q.additional_taxes && `+${formatMoney(q.additional_taxes)} tax`].filter(Boolean).join(" · ")}</small></>
       : <><strong className="unpriced">No price</strong><small>Check current fare</small></>}
     {item.offer.booking_url && <a className="chip-link" href={item.offer.booking_url} target="_blank" rel="noopener noreferrer"><span className="sr-only">View on </span>{source}<Icon name="external" size={13} /></a>}
-    {q && <small className="source" title={`${source} via ${item.offer.evidence.provider}, ${new Date(q.observed_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" })} UTC`}>Checked {new Date(q.observed_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })}</small>}
-    {!!notes.length && <ul className="item-notes">{notes.map(n => <li key={n}>{n}</li>)}</ul>}
+    <span className="price-foot">
+      {q && <small className="source" title={`${source} via ${item.offer.evidence.provider}, ${new Date(q.observed_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" })} UTC`}>Checked {new Date(q.observed_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })}</small>}
+      {!!checks.length && <ChecksTrigger count={checks.length} label={label} />}
+    </span>
   </div>;
+}
+
+// The root is the row body so the expanded checks span the full row, not the narrow price column.
+function StopBody({ checks, children }: { checks: string[]; children: ReactNode }) {
+  return checks.length
+    ? <Collapsible className="stop-body">{children}<ChecksPanel checks={checks} /></Collapsible>
+    : <div className="stop-body">{children}</div>;
 }
 
 function LegItem({ leg }: { leg: Leg }) {
   const length = duration(leg.departs_at, leg.arrives_at);
+  const checks = itemChecks(leg);
   return <TimelineItem className="stop">
     <TimelineMarker><Icon name={leg.mode === "rail" ? "train" : "plane"} /></TimelineMarker>
     <TimelineConnector />
-    <div className="stop-body">
+    <StopBody checks={checks}>
       <div className="stop-main">
         <TimelineTitle render={<h3 />}>{leg.origin}<Icon name="arrowRight" size={16} /><span className="sr-only"> to </span>{leg.destination}</TimelineTitle>
         <TimelineTime dateTime={leg.departs_at}>{day(leg.departs_at)} · {wallTime(leg.departs_at)}–{wallTime(leg.arrives_at)}{leg.arrives_at.slice(0, 10) !== leg.departs_at.slice(0, 10) ? " +1" : ""}</TimelineTime>
         <TimelineDescription>{[leg.operator, leg.service_number].filter(Boolean).join(" ")}{length ? ` · ${length}` : ""}</TimelineDescription>
       </div>
-      <Price item={leg} />
-    </div>
+      <Price item={leg} checks={checks} label={`${leg.origin} to ${leg.destination}`} />
+    </StopBody>
   </TimelineItem>;
 }
 
 function StayItem({ stay }: { stay: Stay }) {
   const count = nights(stay.check_in, stay.check_out);
   const facts = [stay.room_description, stay.bathroom !== "unknown" && `${stay.bathroom === "private" ? "Private" : "Shared"} bathroom`].filter(Boolean).join(" · ");
+  const checks = itemChecks(stay);
   return <TimelineItem className="stop">
     <TimelineMarker><Icon name="bed" /></TimelineMarker>
     <TimelineConnector />
-    <div className="stop-body">
+    <StopBody checks={checks}>
       <div className="stop-main">
         <TimelineTitle render={<h3 />}>{stay.property_name}</TimelineTitle>
         <TimelineTime dateTime={stay.check_in}>{day(stay.check_in)} – {day(stay.check_out)} · {count} night{count === 1 ? "" : "s"}</TimelineTime>
         <TimelineDescription>{facts}{stay.review_score ? <span className="score"><Icon name="star" size={12} />{stay.review_score}</span> : null}</TimelineDescription>
       </div>
-      <Price item={stay} />
-    </div>
+      <Price item={stay} checks={checks} label={stay.property_name} />
+    </StopBody>
   </TimelineItem>;
 }
 
@@ -147,32 +174,52 @@ export function JourneyPreview({ trip, ended = false, children }: { trip: Trip; 
   </article>;
 }
 
+const firstSentence = (text: string) => text.split(/(?<=[.;])\s/)[0].replace(/[.;]$/, "");
+
+function BeforeYouBook({ trip }: { trip: Trip }) {
+  const checks = trip.checks?.length ? trip.checks : (trip.gaps ?? []).map(g => ({ headline: firstSentence(g), detail: g }));
+  const links = [
+    ...(trip.transfers ?? []).map(t => ({ title: t.title, label: t.summary || t.title, text: t.description, url: t.source_url, cta: "Official guidance" })),
+    ...(trip.maps_transfers ?? []).map(t => ({ title: t.title, label: t.summary || t.title, text: t.description, url: t.url, cta: "Open in Google Maps" })),
+  ];
+  if (!checks.length && !links.length) return null;
+  const covered = new Set(checks.map(c => c.detail));
+  const details = [
+    ...checks.filter(c => c.detail && c.detail !== c.headline).map(c => ({ title: c.headline, text: c.detail! })),
+    ...links.filter(l => !covered.has(l.text)).map(l => ({ title: l.title, text: l.text })),
+  ];
+  const id = `book-${trip.fixture.id}`;
+  return <section className="before-book" aria-labelledby={id}>
+    {!!checks.length && <>
+      <h3 id={id}><Icon name="alert" size={16} />Before you book<span>{checks.length} check{checks.length === 1 ? "" : "s"}</span></h3>
+      <ul className="check-list">{checks.map(c => <li key={c.headline}>{c.headline}</li>)}</ul>
+    </>}
+    {!!links.length && <div className="around">
+      <h4 id={checks.length ? undefined : id}>Getting around</h4>
+      <ul>{links.map(l => <li key={l.url + l.title}>
+        <a className="chip-link" href={l.url} target="_blank" rel="noopener noreferrer" title={l.title} aria-label={`${l.title}: ${l.cta}`}><Icon name="map" size={14} />{l.label}<Icon name="external" size={12} /></a>
+      </li>)}</ul>
+    </div>}
+    {!!details.length && <Collapsible className="book-details">
+      <CollapsibleTrigger>Details<Icon name="chevron" size={14} className="icon chevron" /></CollapsibleTrigger>
+      <CollapsiblePanel><dl>{details.map(d => <div key={d.title + d.text}><dt>{d.title}</dt><dd>{d.text}</dd></div>)}</dl></CollapsiblePanel>
+    </Collapsible>}
+  </section>;
+}
+
 export function ItineraryView({ itinerary }: { itinerary: Itinerary }) {
   return <div className="itineraries">
     {itinerary.trips.map(trip => {
-      const getAround = [
-        ...(trip.transfers ?? []).map(t => ({ key: t.title, title: t.title, text: t.description, url: t.source_url, cta: "Official guidance" })),
-        ...(trip.maps_transfers ?? []).map(t => ({ key: t.title, title: t.title, text: t.description, url: t.url, cta: "Open in Google Maps" })),
-      ];
       return <article key={trip.fixture.id} className="trip card">
         <MatchHero trip={trip} status={trip.feasibility === "verified" ? "Ready to review" : "Checks outstanding"} tone={trip.feasibility === "verified" ? "ready" : "checks"} />
         <Stats trip={trip} />
+        <BeforeYouBook trip={trip} />
         <Timeline className="itinerary" aria-label="Itinerary">
           {trip.journey?.outbound.map(leg => <LegItem key={leg.id} leg={leg} />)}
           {trip.stay && <StayItem stay={trip.stay} />}
           <MatchItem fixture={trip.fixture} />
           {trip.journey?.inbound.map(leg => <LegItem key={leg.id} leg={leg} />)}
         </Timeline>
-        {[trip.stay, ...(trip.journey?.outbound ?? []), ...(trip.journey?.inbound ?? [])].some(i => i?.offer.link_kind === "contextual_search" && i.offer.booking_url) && <p className="hint inset"><Icon name="info" size={14} />Links open a fresh search; you may need to reselect.</p>}
-        {!!getAround.length && <section className="group" aria-labelledby={`around-${trip.fixture.id}`}>
-          <h3 id={`around-${trip.fixture.id}`}>Getting around</h3>
-          <ul className="rows">{getAround.map(t => <li key={t.key}>
-            <a href={t.url} target="_blank" rel="noopener noreferrer" aria-label={`${t.title}: ${t.cta}`}>
-              <Icon name="map" /><span><strong>{t.title}</strong><small>{t.text}</small></span><Icon name="external" size={14} />
-            </a>
-          </li>)}</ul>
-        </section>}
-        {!!trip.gaps?.length && <aside className="callout warn" aria-label="Before you book"><Icon name="alert" /><div><strong>Before you book</strong><ul>{trip.gaps.map(g => <li key={g}>{g}</li>)}</ul></div></aside>}
         {!!trip.alternatives?.length && <Collapsible className="disclosure">
           <CollapsibleTrigger><Icon name="route" />{trip.alternatives.length} other option{trip.alternatives.length > 1 ? "s" : ""}<Icon name="chevron" className="icon chevron" /></CollapsibleTrigger>
           <CollapsiblePanel>

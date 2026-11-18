@@ -86,6 +86,8 @@ class Fixture(Record):
 class TransferGuidance(Record):
     title: str
     description: str
+    # A few words for compact link chips; the description stays the full guidance.
+    summary: str = ""
     source_url: str
     reviewed_at: AwareDatetime
 
@@ -93,6 +95,7 @@ class TransferGuidance(Record):
 class MapsTransfer(Record):
     title: str
     description: str
+    summary: str = ""
     url: str
 
 
@@ -107,6 +110,8 @@ class Route(Record):
     onward_stations: tuple[str, ...] = ()
     minimum_transfer_minutes: int = Field(180, ge=0)
     transfer_note: str
+    # One-line version of transfer_note for the "Before you book" checklist.
+    transfer_headline: str = ""
     source_urls: tuple[str, ...] = ()
     reviewed_at: AwareDatetime | None = None
     guidance: tuple[TransferGuidance, ...] = Field((), max_length=5)
@@ -222,6 +227,13 @@ class Alternative(Record):
     summary: str
 
 
+class Check(Record):
+    """Something the traveller must confirm before booking: a short headline plus full detail."""
+
+    headline: str
+    detail: str = ""
+
+
 class Trip(Record):
     fixture: Fixture
     journey: Journey | None = None
@@ -230,6 +242,8 @@ class Trip(Record):
     price_coverage: float = Field(0, ge=0, le=1)
     feasibility: Literal["verified", "needs_checks"] = "needs_checks"
     gaps: tuple[str, ...] = ()
+    # Headline form of gaps; empty on trips stored before checks existed.
+    checks: tuple[Check, ...] = ()
     summary: str
     transfers: tuple[TransferGuidance, ...] = Field((), max_length=5)
     maps_transfers: tuple[MapsTransfer, ...] = Field((), max_length=3)

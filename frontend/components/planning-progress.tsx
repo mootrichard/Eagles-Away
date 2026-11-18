@@ -1,4 +1,5 @@
 "use client";
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import type { Snapshot } from "../lib/api";
 import { type Stage, stageFor, tickerLines } from "../lib/planning";
@@ -57,9 +58,10 @@ export function PlanningProgress({ snapshot, city, origin = "London", variant = 
   return <div className={`plan-progress card ${stage}`} aria-hidden="true">
     <div className="journey-route">
       <div className="journey-city"><small>From</small><strong>{origin}</strong></div>
-      <div className="journey-arc"><svg viewBox="0 0 320 90" preserveAspectRatio="none" focusable="false"><path d="M 10 72 Q 160 -35 310 72" /></svg><span className="journey-plane"><Icon name="plane" size={22} /></span></div>
+      <div className="journey-arc"><svg viewBox="0 0 320 90" preserveAspectRatio="none" focusable="false"><path d="M 10 72 Q 160 -35 310 72" /></svg><span className="ziggy-x"><span className="ziggy-y"><Image className="ziggy" src="/ziggy.png" alt="" width={160} height={228} unoptimized /></span></span></div>
       <div className="journey-city destination"><small>To</small><strong>{destination}</strong></div>
     </div>
+    <Image className="ziggy ziggy-solo" src="/ziggy.png" alt="" width={160} height={228} unoptimized />
     <p className="ticker hero"><span key={reduced ? "static" : `${stage}-${index}`} className={reduced ? undefined : "tfade"}>{rotatingText}</span></p>
     <ol className="stages">{stages.map((name, i) => <li key={name} className={i < reached || stage === "done" ? "done" : i === reached ? "active" : ""}>{i < reached || stage === "done" ? <Icon name="check" size={12} /> : <span className="dot" />}{name}</li>)}</ol>
   </div>;

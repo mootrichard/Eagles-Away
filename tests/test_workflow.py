@@ -66,6 +66,10 @@ async def test_recorded_plan_query_restart_and_replay(environment, session_input
         assert result.itinerary and result.itinerary.trips[0].journey
         assert result.itinerary.trips[0].stay
         assert result.itinerary.trips[0].summary == TEMPLATE_SUMMARY
+        checks = result.itinerary.trips[0].checks
+        # Each gap has a scannable headline; the full sentence is kept as its detail.
+        assert [c.detail for c in checks] == list(result.itinerary.trips[0].gaps)
+        assert all(0 < len(c.headline) <= 60 for c in checks)
         assert result.preview_trip is None
         for _ in range(3):
             assert await handle.query(Workflow.get_snapshot, result.state_revision) is None
