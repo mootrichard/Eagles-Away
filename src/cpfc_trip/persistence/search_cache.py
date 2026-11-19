@@ -20,16 +20,32 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 
 from pydantic import ValidationError
-from sqlalchemy import delete, update
+from sqlalchemy import and_, delete, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
-from cpfc_trip.domain import SearchBatch, SearchSpec
+from cpfc_trip.domain import Leg, SearchBatch, SearchSpec, Stay
 from cpfc_trip.persistence.models import SearchCacheRow
 
 SearchMode = Literal["flight", "rail", "stay"]
 DEFAULT_TTL = timedelta(hours=24)
 STALE_GAP = "The live search failed, so these results are from an earlier check."
+NEGATIVE_CACHE_TTL = timedelta(hours=1)
+CACHEABLE_FAILURES = frozenset(
+    {"provider_empty", "no_timely_flight", "unverified", "unsupported_connection"}
+)
+ROUTE_SEARCH_FIELDS = frozenset(
+    {
+        "mode",
+        "origin",
+        "destination",
+        "destination_timezone",
+        "onward_stations",
+        "minimum_transfer_minutes",
+        "gateway_arrival_hours",
+        "gateway_departure_hours",
+    }
+)
 
 
 def cache_identity(spec: SearchSpec, mode: SearchMode) -> tuple[str, str]:
@@ -56,9 +72,11 @@ def cache_identity(spec: SearchSpec, mode: SearchMode) -> tuple[str, str]:
     else:
         namespace = "transport"
         fields = (
-            "transport-v1",
+            "transport-v2",
             spec.fixture.id,
-            spec.route.model_dump(mode="json"),
+            spec.fixture.kickoff_at.isoformat(),
+            spec.route.model_dump(mode="json", include=set(ROUTE_SEARCH_FIELDS)),
+            spec.latest_return.isoformat() if spec.latest_return else None,
             mode,
             *common,
         )
@@ -66,9 +84,18 @@ def cache_identity(spec: SearchSpec, mode: SearchMode) -> tuple[str, str]:
     return namespace, hashlib.sha256(payload.encode()).hexdigest()
 
 
-class SearchCache:
-    """Share positive normalized batches across workers without changing their evidence times."""
+def for_route(batch: SearchBatch, spec: SearchSpec) -> SearchBatch:
+    journeys = tuple(
+        journey.model_copy(update={"route_id": spec.route.id}) for journey in batch.journeys
+    )
+    return batch.model_copy(update={"journeys": journeys})
 
+
+def _mark_stale[T: (Leg, Stay)](item: T) -> T:
+    return item.model_copy(update={"caveats": (*item.caveats, STALE_GAP)})
+
+
+class SearchCache:
     def __init__(
         self,
         database: AsyncEngine,
@@ -84,9 +111,13 @@ class SearchCache:
         self.early_beta = early_beta
         self.uniform = uniform
 
+    @property
+    def _negative_ttl(self) -> timedelta:
+        return min(self.ttl, NEGATIVE_CACHE_TTL)
+
     async def _row(
         self, spec: SearchSpec, mode: SearchMode, checked: datetime
-    ) -> tuple[SearchBatch, timedelta, float] | None:
+    ) -> tuple[SearchBatch, timedelta, float, bool] | None:
         if self.ttl <= timedelta(0):
             return None
         namespace, key = cache_identity(spec, mode)
@@ -98,10 +129,15 @@ class SearchCache:
         if stored_at.tzinfo is None:
             stored_at = stored_at.replace(tzinfo=UTC)
         try:
-            batch = SearchBatch.model_validate(row.payload).model_copy(update={"calls": 0})
+            batch = SearchBatch.model_validate(row.payload, extra="ignore")
         except ValidationError:
             return None
-        return batch, checked - stored_at, row.fetch_seconds
+        return (
+            for_route(batch, spec).model_copy(update={"calls": 0}),
+            checked - stored_at,
+            row.fetch_seconds,
+            row.is_negative,
+        )
 
     async def get(
         self, spec: SearchSpec, mode: SearchMode, *, now: datetime | None = None
@@ -110,7 +146,9 @@ class SearchCache:
         found = await self._row(spec, mode, now or datetime.now(UTC))
         if found is None:
             return None
-        batch, age, fetch_seconds = found
+        batch, age, fetch_seconds, negative = found
+        if negative:
+            return batch if age < self._negative_ttl else None
         # 1 - U lies in (0, 1], so the logarithm is finite.
         early = fetch_seconds * self.early_beta * -math.log(1 - self.uniform())
         return batch if age + timedelta(seconds=early) < self.ttl else None
@@ -122,10 +160,25 @@ class SearchCache:
         found = await self._row(spec, mode, now or datetime.now(UTC))
         if found is None:
             return None
-        batch, age, _ = found
-        if age >= self.ttl + self.stale_if_error:
+        batch, age, _, negative = found
+        if negative or age >= self.ttl + self.stale_if_error:
             return None
-        return batch.model_copy(update={"gaps": (*batch.gaps, STALE_GAP)})
+        return batch.model_copy(
+            update={
+                "stale": True,
+                "gaps": (*batch.gaps, STALE_GAP),
+                "journeys": tuple(
+                    journey.model_copy(
+                        update={
+                            "outbound": tuple(map(_mark_stale, journey.outbound)),
+                            "inbound": tuple(map(_mark_stale, journey.inbound)),
+                        }
+                    )
+                    for journey in batch.journeys
+                ),
+                "stays": tuple(map(_mark_stale, batch.stays)),
+            }
+        )
 
     async def put(
         self,
@@ -136,8 +189,9 @@ class SearchCache:
         fetch_seconds: float = 0.0,
         now: datetime | None = None,
     ) -> None:
-        """Keep only successful batches; opportunistically remove rows past any reuse."""
-        if self.ttl <= timedelta(0) or not (batch.stays if mode == "stay" else batch.journeys):
+        positive = bool(batch.stays if mode == "stay" else batch.journeys)
+        negative = mode == "flight" and not positive and batch.failure in CACHEABLE_FAILURES
+        if self.ttl <= timedelta(0) or not (positive or negative):
             return
         namespace, key = cache_identity(spec, mode)
         checked = now or datetime.now(UTC)
@@ -145,11 +199,25 @@ class SearchCache:
             dict[str, object],
             json.loads(batch.model_copy(update={"calls": 0}).model_dump_json()),
         )
-        values = {"payload": payload, "stored_at": checked, "fetch_seconds": fetch_seconds}
+        values = {
+            "payload": payload,
+            "stored_at": checked,
+            "fetch_seconds": fetch_seconds,
+            "is_negative": negative,
+        }
         async with self.sessions.begin() as session:
             await session.execute(
                 delete(SearchCacheRow).where(
-                    SearchCacheRow.stored_at <= checked - self.ttl - self.stale_if_error
+                    or_(
+                        and_(
+                            SearchCacheRow.is_negative,
+                            SearchCacheRow.stored_at <= checked - self._negative_ttl,
+                        ),
+                        and_(
+                            ~SearchCacheRow.is_negative,
+                            SearchCacheRow.stored_at <= checked - self.ttl - self.stale_if_error,
+                        ),
+                    )
                 )
             )
             try:
@@ -157,6 +225,8 @@ class SearchCache:
                     session.add(SearchCacheRow(namespace=namespace, key=key, **values))
                     await session.flush()
             except IntegrityError:
+                if negative:
+                    return
                 await session.execute(
                     update(SearchCacheRow)
                     .where(SearchCacheRow.namespace == namespace, SearchCacheRow.key == key)

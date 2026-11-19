@@ -54,6 +54,21 @@ LIVE_ORIGINS: tuple[str, ...] = (
     "Newcastle",
 )
 
+NEARBY_DEPARTURES: dict[str, tuple[str, ...]] = {
+    "belfast": ("Dublin",),
+    "birmingham": ("Manchester", "London"),
+    "bristol": ("Birmingham", "London"),
+    "edinburgh": ("Glasgow", "London"),
+    "glasgow": ("Edinburgh", "London"),
+    "liverpool": ("Manchester", "London"),
+    "london": ("Birmingham",),
+    "manchester": ("Liverpool", "London"),
+    "newcastle": ("Edinburgh", "London"),
+}
+DEPARTURE_ONLY: dict[str, tuple[str, ...]] = {"Dublin": ("DUB",)}
+AIRPORT_TRANSPORT_GUIDE = "https://www.nationalrail.co.uk/airports/trains-to-british-airports/"
+AIRPORT_GUIDES = {"Dublin": "https://www.dublinairport.com/to-from-the-airport/by-bus"}
+
 LONDON_TRANSFER = TransferGuidance(
     title="Changing stations in London",
     description=(
@@ -77,8 +92,59 @@ def canonical_origin(city: str) -> str:
 
 
 def airports_for(city: str) -> tuple[str, ...]:
-    """Return the airports that this planner searches for a supported city."""
-    return UK_ORIGINS[canonical_origin(city)]
+    name = next(
+        (name for name in DEPARTURE_ONLY if name.casefold() == city.strip().casefold()), None
+    )
+    return DEPARTURE_ONLY[name] if name else UK_ORIGINS[canonical_origin(city)]
+
+
+def alternate_departure_cities(origin_city: str) -> tuple[str, ...]:
+    return NEARBY_DEPARTURES.get(origin_city.strip().casefold(), ())
+
+
+def alternate_departure_route(route: Route, origin_city: str, departure_city: str) -> Route | None:
+    alternate = next(
+        (
+            city
+            for city in alternate_departure_cities(origin_city)
+            if city.casefold() == departure_city.strip().casefold()
+        ),
+        None,
+    )
+    if route.mode != "flight" or alternate is None:
+        return None
+    airports = airports_for(alternate)
+    if set(airports).intersection(route.origin.split(",")):
+        return None
+
+    place = "London’s airports" if alternate == "London" else f"{alternate} Airport"
+    note = (
+        f"Arrange travel between {canonical_origin(origin_city)} and {place} separately. "
+        "Allow time for check-in and the journey home. These fares are separate from the trip total."
+    )
+    if alternate == "Dublin":
+        note += " Direct coaches run between Belfast and Dublin Airport; airlines ask for photo ID."
+    guide = AIRPORT_GUIDES.get(alternate, AIRPORT_TRANSPORT_GUIDE)
+    guidance = route.guidance
+    if len(guidance) < 5:
+        guidance = (
+            TransferGuidance(
+                title=f"Getting to and from {place}",
+                description=note,
+                source_url=guide,
+                reviewed_at=datetime(2026, 11, 18, tzinfo=UTC),
+            ),
+            *guidance,
+        )
+    return route.model_copy(
+        update={
+            "id": f"{route.id}-depart-{alternate.casefold()}",
+            "origin": ",".join(airports),
+            "transfer_note": f"{note} {route.transfer_note}",
+            "guidance": guidance,
+            "source_urls": tuple(dict.fromkeys((*route.source_urls, guide))),
+        }
+    )
 
 
 def routes_for_origin(routes: tuple[Route, ...], city: str) -> tuple[Route, ...]:

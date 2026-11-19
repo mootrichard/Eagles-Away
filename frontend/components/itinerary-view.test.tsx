@@ -32,6 +32,8 @@ describe("itinerary view", () => {
     render(<ItineraryView itinerary={itinerary} />);
     const card = screen.getByRole("region", { name: /Before you book/ });
     expect(within(card).getByText("2 checks")).toBeVisible();
+    expect(screen.getByText("Links open a fresh search. You may need to reselect.")).toBeVisible();
+    expect(screen.getAllByText("Getting around")).toHaveLength(1);
     expect(within(card).getByText("Airport → Warsaw Central → Białystok train")).toBeVisible();
     expect(within(card).getByRole("link", { name: "Warsaw and Białystok rail connection: Official guidance" })).toHaveAttribute("href", "https://www.skm.warszawa.pl/en/faq-2/");
     expect(within(card).getByRole("link", { name: /London centre to departure point/ })).toHaveTextContent("London centre → LHR Airport");

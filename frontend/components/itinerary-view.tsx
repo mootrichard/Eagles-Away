@@ -155,22 +155,54 @@ function Stats({ trip }: { trip: Trip }) {
   </dl>;
 }
 
+function SearchLinkNote({ trip }: { trip: Trip }) {
+  const items = [trip.stay, ...(trip.journey?.outbound ?? []), ...(trip.journey?.inbound ?? [])];
+  if (!items.some(item => item?.offer.link_kind === "contextual_search" && item.offer.booking_url)) return null;
+  return <p className="hint inset"><Icon name="info" size={14} />Links open a fresh search. You may need to reselect.</p>;
+}
+
+function TripDisclosure({ trip, label, partial = false }: { trip: Trip; label: string; partial?: boolean }) {
+  const { journey, stay } = trip;
+  return <article className="trip card" aria-label={partial ? "Partial trip results" : undefined}>
+    <Collapsible className="disclosure">
+      <CollapsibleTrigger><Icon name={journey ? "route" : "bed"} />{label}<Icon name="chevron" className="icon chevron" /></CollapsibleTrigger>
+      <CollapsiblePanel>
+        <p className="hint">{journey && stay ? "Confirm dates, current prices and availability with each provider before booking." : "Check dates and current prices before combining this option with other travel."}</p>
+        <Timeline className="itinerary" aria-label={label}>
+          {journey?.outbound.map(leg => <LegItem key={leg.id} leg={leg} />)}
+          {stay && <StayItem stay={stay} />}
+          {partial && <MatchItem fixture={trip.fixture} />}
+          {journey?.inbound.map(leg => <LegItem key={leg.id} leg={leg} />)}
+        </Timeline>
+        <SearchLinkNote trip={trip} />
+      </CollapsiblePanel>
+    </Collapsible>
+  </article>;
+}
+
 export function JourneyPreview({ trip, ended = false, children }: { trip: Trip; ended?: boolean; children?: ReactNode }) {
-  const journey = trip.journey;
-  if (!journey && !trip.stay) return null;
-  const stay = trip.stay;
-  const failure = journey && stay ? "We couldn’t finish checking this trip." : journey ? "We couldn’t verify accommodation for this journey." : "We couldn’t verify a return journey for this stay.";
-  return <article className="trip card journey-preview" aria-label={ended ? "Partial trip results" : journey ? "Journey found while planning continues" : "Stay found while planning continues"}>
-    <MatchHero trip={trip} status={ended ? "Incomplete trip" : "Plan in progress"} tone={ended ? "checks" : "progress"} />
-    {ended && <aside className="callout warn"><Icon name="alert" /><div><strong>{failure}</strong><p>Confirm matching dates before booking.</p></div></aside>}
+  const { journey, stay } = trip;
+  if (!journey && !stay) return null;
+  const paired = Boolean(journey && stay);
+  if (ended) {
+    const label = paired ? "Journey and stay found" : journey?.outbound[0].mode === "flight" ? "Flight found" : journey ? "Journey found" : "Stay found";
+    return <TripDisclosure trip={trip} label={label} partial />;
+  }
+  const label = paired ? "Provisional itinerary" : journey ? "Journey found while planning continues" : "Stay found while planning continues";
+  const status = paired ? "Provisional trip" : "Plan in progress";
+  return <article className="trip card journey-preview" aria-label={label}>
+    <MatchHero trip={trip} status={status} tone="progress" />
+    {paired && <Stats trip={trip} />}
     <Timeline className="itinerary" aria-label="Itinerary">
-      {!journey && !ended && <PendingItem label="Finding your journey">{children}</PendingItem>}
+      {!journey && <PendingItem label="Finding your journey">{children}</PendingItem>}
       {journey?.outbound.map(leg => <LegItem key={leg.id} leg={leg} />)}
-      {stay ? <StayItem stay={stay} /> : !ended && <PendingItem label="Finding your stay">{children}</PendingItem>}
+      {stay ? <StayItem stay={stay} /> : <PendingItem label="Finding your stay">{children}</PendingItem>}
       <MatchItem fixture={trip.fixture} />
       {journey?.inbound.map(leg => <LegItem key={leg.id} leg={leg} />)}
-      {journey && stay && !ended && <PendingItem label="Comparing options">{children}</PendingItem>}
+      {paired && <PendingItem label="Comparing options">{children}</PendingItem>}
     </Timeline>
+    {paired && <p className="hint inset">Confirm dates, current prices and availability with each provider before booking.</p>}
+    <SearchLinkNote trip={trip} />
   </article>;
 }
 
@@ -207,6 +239,17 @@ function BeforeYouBook({ trip }: { trip: Trip }) {
   </section>;
 }
 
+export function EarlierOptions({ trips }: { trips: Trip[] }) {
+  return <div className="itineraries">
+    {trips.map(trip => {
+      const { journey, stay, fixture } = trip;
+      const paired = journey && stay;
+      const label = paired ? "Earlier matching trip" : journey ? "Earlier journey option" : "Earlier stay option";
+      return <TripDisclosure key={`${fixture.id}-${journey?.id ?? ""}-${stay?.id ?? ""}`} trip={trip} label={label} />;
+    })}
+  </div>;
+}
+
 export function ItineraryView({ itinerary }: { itinerary: Itinerary }) {
   return <div className="itineraries">
     {itinerary.trips.map(trip => {
@@ -220,6 +263,7 @@ export function ItineraryView({ itinerary }: { itinerary: Itinerary }) {
           <MatchItem fixture={trip.fixture} />
           {trip.journey?.inbound.map(leg => <LegItem key={leg.id} leg={leg} />)}
         </Timeline>
+        <SearchLinkNote trip={trip} />
         {!!trip.alternatives?.length && <Collapsible className="disclosure">
           <CollapsibleTrigger><Icon name="route" />{trip.alternatives.length} other option{trip.alternatives.length > 1 ? "s" : ""}<Icon name="chevron" className="icon chevron" /></CollapsibleTrigger>
           <CollapsiblePanel>

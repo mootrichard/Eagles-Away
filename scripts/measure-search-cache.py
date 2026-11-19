@@ -43,8 +43,11 @@ class MeasuredSearch(SearchActivities):
     async def _cached_or_live(self, spec: SearchSpec, mode: SearchMode) -> SearchBatch:
         started = time.monotonic()
         result = await super()._cached_or_live(spec, mode)
-        # Cache hits cost no provider calls; any live search costs at least one.
-        source = "cache" if result.calls == 0 and not result.provider_failed else "provider"
+        source = (
+            "cache"
+            if result.calls == 0 and not result.stale and result.failure != "provider_error"
+            else "provider"
+        )
         self.events.append((source, mode, time.monotonic() - started, result.calls))
         return result
 

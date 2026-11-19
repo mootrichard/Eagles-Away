@@ -1,16 +1,16 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { GOAL_LEFT, GOAL_LINE, GOAL_RIGHT, SPOT_Y, type GoalieState, aim, ballAt, initialGoalie, start, step } from "../lib/goalie";
 
 const BEST_KEY = "cpfc-goalie-best";
 const BLUE = "#0055a5", RED = "#ee2e24";
 const BALL_RADIUS = 12;
 
-// A pointer/touch mini-game for the wait. Purely decorative for assistive tech (the
-// surrounding card is aria-hidden and the live status region carries real progress).
-// It never auto-plays: nothing moves until someone taps, which also respects reduced motion.
+// The game does not animate until the player starts it.
 export function GoalieGame() {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const instructions = useId();
+  const [score, setScore] = useState("");
 
   useEffect(() => {
     const el = canvas.current;
@@ -39,12 +39,30 @@ export function GoalieGame() {
 
     const toPitch = (e: PointerEvent) => { const r = el.getBoundingClientRect(); return (e.clientX - r.left) / r.width; };
     const onMove = (e: PointerEvent) => { state = aim(state, toPitch(e)); };
+    const begin = () => {
+      if (state.phase === "idle") {
+        state = start(state);
+        setScore("Game started.");
+        loop();
+      }
+    };
     const onDown = (e: PointerEvent) => {
+      el.focus({ preventScroll: true });
       state = aim(state, toPitch(e));
-      if (state.phase === "idle") { state = start(state); loop(); }
+      begin();
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        begin();
+      } else if (state.phase === "playing" && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        state = aim(state, state.targetX + (e.key === "ArrowLeft" ? -0.12 : 0.12));
+      }
     };
     el.addEventListener("pointermove", onMove);
     el.addEventListener("pointerdown", onDown);
+    el.addEventListener("keydown", onKeyDown);
 
     function loop() {
       cancelAnimationFrame(frame);
@@ -56,6 +74,7 @@ export function GoalieGame() {
         const result = step(state, dt);
         state = result.state;
         if (result.outcome) {
+          setScore(`${result.outcome === "save" ? "Save" : "Goal"}. Saves: ${state.saves}. Goals: ${state.goals}.`);
           flash = 0.6;
           if (state.best > 0) try { localStorage.setItem(BEST_KEY, String(state.best)); } catch { /* storage blocked */ }
         }
@@ -122,13 +141,19 @@ export function GoalieGame() {
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      ziggy.onload = null;
       el.removeEventListener("pointermove", onMove);
       el.removeEventListener("pointerdown", onDown);
+      el.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
 
-  return <canvas ref={canvas} className="goalie-game" />;
+  return <>
+    <canvas ref={canvas} className="goalie-game" tabIndex={0} role="application" aria-label="Play in goal with Ziggy" aria-describedby={instructions} />
+    <p className="hint" id={instructions}>Tap or press Enter to start. Move the pointer or use the left and right arrow keys to make a save.</p>
+    <p className="sr-only" aria-live="polite">{score}</p>
+  </>;
 }
 
 function drawBall(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {

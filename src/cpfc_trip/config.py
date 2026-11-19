@@ -23,12 +23,16 @@ class Settings(BaseSettings):
     planner_mode: Literal["live", "recorded"] = "live"
     searchapi_api_key: SecretStr = SecretStr("")
     searchapi_enabled: bool = True
-    # How long a stored search result is reused; 0 always searches live.
+    search_cache_enabled: bool = True
     search_cache_ttl_minutes: int = Field(1440, ge=0)
-    # Extra time a result may stand in when the live search fails.
     search_cache_stale_if_error_minutes: int = Field(1440, ge=0)
-    # Probabilistic early refresh: mean lead before expiry is beta x the search's duration.
     search_cache_early_beta: float = Field(240.0, ge=0)
+    worker_max_activities: int = Field(64, ge=1, le=512)
+    database_pool_size: int = Field(4, ge=1, le=50)
+    database_max_overflow: int = Field(2, ge=0, le=50)
+    session_create_per_minute: int = Field(3, ge=1)
+    session_create_per_10_minutes: int = Field(10, ge=1)
+    snapshot_polls_per_minute: int = Field(240, ge=1)
 
     @model_validator(mode="after")
     def production(self) -> Self:
