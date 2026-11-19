@@ -1,7 +1,21 @@
-"""24-hour shared cache of normalized provider results, split by search domain."""
+"""Shared cache of normalized provider results, split by search domain.
+
+Freshness is decided when reading: rows record when they were stored and how long the live
+search took, and the configured policy applies to existing rows immediately.
+
+- ``ttl``: how long a row is fresh. Zero disables the cache.
+- ``stale_if_error``: extra time a row may still be served when the live search fails.
+- ``early_beta``: probabilistic early expiration ("XFetch", Vattani et al., VLDB 2015).
+  Each read treats the row as expired ``fetch_seconds * early_beta * -ln(U)`` early, so
+  routes that are read often, or are slow to search, refresh before they expire. The mean
+  lead time is ``fetch_seconds * early_beta``. Zero disables early expiration.
+"""
 
 import hashlib
 import json
+import math
+import random
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 
@@ -14,7 +28,8 @@ from cpfc_trip.domain import SearchBatch, SearchSpec
 from cpfc_trip.persistence.models import SearchCacheRow
 
 SearchMode = Literal["flight", "rail", "stay"]
-CACHE_TTL = timedelta(hours=24)
+DEFAULT_TTL = timedelta(hours=24)
+STALE_GAP = "The live search failed, so these results are from an earlier check."
 
 
 def cache_identity(spec: SearchSpec, mode: SearchMode) -> tuple[str, str]:
@@ -54,28 +69,63 @@ def cache_identity(spec: SearchSpec, mode: SearchMode) -> tuple[str, str]:
 class SearchCache:
     """Share positive normalized batches across workers without changing their evidence times."""
 
-    def __init__(self, database: AsyncEngine) -> None:
+    def __init__(
+        self,
+        database: AsyncEngine,
+        ttl: timedelta = DEFAULT_TTL,
+        *,
+        stale_if_error: timedelta = timedelta(0),
+        early_beta: float = 0.0,
+        uniform: Callable[[], float] = random.random,
+    ) -> None:
         self.sessions = async_sessionmaker(database, expire_on_commit=False)
+        self.ttl = ttl
+        self.stale_if_error = stale_if_error
+        self.early_beta = early_beta
+        self.uniform = uniform
 
-    async def get(
-        self, spec: SearchSpec, mode: SearchMode, *, now: datetime | None = None
-    ) -> SearchBatch | None:
-        """Return an unexpired batch with zero new provider calls, or ``None``."""
+    async def _row(
+        self, spec: SearchSpec, mode: SearchMode, checked: datetime
+    ) -> tuple[SearchBatch, timedelta, float] | None:
+        if self.ttl <= timedelta(0):
+            return None
         namespace, key = cache_identity(spec, mode)
-        checked = now or datetime.now(UTC)
         async with self.sessions() as session:
             row = await session.get(SearchCacheRow, (namespace, key))
         if row is None:
             return None
-        expires_at = row.expires_at
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=UTC)
-        if expires_at <= checked:
-            return None
+        stored_at = row.stored_at
+        if stored_at.tzinfo is None:
+            stored_at = stored_at.replace(tzinfo=UTC)
         try:
-            return SearchBatch.model_validate(row.payload).model_copy(update={"calls": 0})
+            batch = SearchBatch.model_validate(row.payload).model_copy(update={"calls": 0})
         except ValidationError:
             return None
+        return batch, checked - stored_at, row.fetch_seconds
+
+    async def get(
+        self, spec: SearchSpec, mode: SearchMode, *, now: datetime | None = None
+    ) -> SearchBatch | None:
+        """Return a fresh batch with zero new provider calls, or ``None`` to search live."""
+        found = await self._row(spec, mode, now or datetime.now(UTC))
+        if found is None:
+            return None
+        batch, age, fetch_seconds = found
+        # 1 - U lies in (0, 1], so the logarithm is finite.
+        early = fetch_seconds * self.early_beta * -math.log(1 - self.uniform())
+        return batch if age + timedelta(seconds=early) < self.ttl else None
+
+    async def stale(
+        self, spec: SearchSpec, mode: SearchMode, *, now: datetime | None = None
+    ) -> SearchBatch | None:
+        """Return a batch within ``ttl + stale_if_error`` after a failed live search."""
+        found = await self._row(spec, mode, now or datetime.now(UTC))
+        if found is None:
+            return None
+        batch, age, _ = found
+        if age >= self.ttl + self.stale_if_error:
+            return None
+        return batch.model_copy(update={"gaps": (*batch.gaps, STALE_GAP)})
 
     async def put(
         self,
@@ -83,10 +133,11 @@ class SearchCache:
         mode: SearchMode,
         batch: SearchBatch,
         *,
+        fetch_seconds: float = 0.0,
         now: datetime | None = None,
     ) -> None:
-        """Keep only successful batches; opportunistically remove expired rows."""
-        if not (batch.stays if mode == "stay" else batch.journeys):
+        """Keep only successful batches; opportunistically remove rows past any reuse."""
+        if self.ttl <= timedelta(0) or not (batch.stays if mode == "stay" else batch.journeys):
             return
         namespace, key = cache_identity(spec, mode)
         checked = now or datetime.now(UTC)
@@ -94,10 +145,12 @@ class SearchCache:
             dict[str, object],
             json.loads(batch.model_copy(update={"calls": 0}).model_dump_json()),
         )
-        values = {"payload": payload, "expires_at": checked + CACHE_TTL}
+        values = {"payload": payload, "stored_at": checked, "fetch_seconds": fetch_seconds}
         async with self.sessions.begin() as session:
             await session.execute(
-                delete(SearchCacheRow).where(SearchCacheRow.expires_at <= checked)
+                delete(SearchCacheRow).where(
+                    SearchCacheRow.stored_at <= checked - self.ttl - self.stale_if_error
+                )
             )
             try:
                 async with session.begin_nested():

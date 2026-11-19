@@ -900,4 +900,5 @@ async def acquire(spec: SearchSpec, mode: str) -> SearchBatch:
             return SearchBatch(
                 gaps=("Travel evidence is currently incomplete; please check the provider.",),
                 calls=api.calls,
+                provider_failed=True,
             )
